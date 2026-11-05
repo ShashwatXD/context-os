@@ -120,6 +120,18 @@ class ToolRegistry:
         )
         self.register(
             ToolDefinition(
+                name="retrieve_source_evidence",
+                description="Retrieve raw cryptographic provenance evidence and source record hashes.",
+                handler=self._tool_retrieve_source_evidence,
+                parameters_schema={
+                    "type": "object",
+                    "properties": {"provenance_id": {"type": "string"}},
+                    "required": ["provenance_id"],
+                },
+            )
+        )
+        self.register(
+            ToolDefinition(
                 name="request_metric_correction",
                 description="Sensitive action: Requests formal correction of a conflicting metric.",
                 handler=self._tool_request_metric_correction,
@@ -248,6 +260,12 @@ class ToolRegistry:
             "owner_name": asset.owner_name or "Unassigned",
             "certification_status": asset.certification_status.value,
         }
+
+    async def _tool_retrieve_source_evidence(self, args: Dict[str, Any]) -> Any:
+        evidence = await self.retrieval_service.retrieve_source_evidence(args["provenance_id"])
+        if not evidence:
+            return {"error": f"Provenance record '{args['provenance_id']}' not found"}
+        return evidence
 
     async def _tool_request_metric_correction(self, args: Dict[str, Any]) -> Any:
         return {

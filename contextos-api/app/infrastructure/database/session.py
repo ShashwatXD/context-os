@@ -45,6 +45,13 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
+async def reset_db() -> None:
+    """Drops and recreates all database tables for a clean slate."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+
 async def close_db() -> None:
     """Gracefully closes all connections in the connection pool."""
     await engine.dispose()

@@ -17,6 +17,9 @@ class AssetType(str, Enum):
     DOCUMENTATION = "DOCUMENTATION"
     TEAM = "TEAM"
     USER = "USER"
+    CHANNEL = "CHANNEL"
+    PULL_REQUEST = "PULL_REQUEST"
+    COMMIT = "COMMIT"
 
 
 class CertificationStatus(str, Enum):
@@ -35,6 +38,18 @@ class ColumnMetadata(BaseModel):
     description: Optional[str] = None
 
 
+class SearchChunk(BaseModel):
+    id: str
+    asset_id: str
+    chunk_type: str
+    chunk_text: str
+    metadata_filters: Dict[str, Any] = Field(default_factory=dict)
+    acl_tags: List[str] = Field(default_factory=list)
+    embedding: Optional[List[float]] = None
+    version_hash: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class Asset(BaseModel):
     id: str
     source_id: str
@@ -48,6 +63,7 @@ class Asset(BaseModel):
     owner_name: Optional[str] = None
     columns: List[ColumnMetadata] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
+    acl_tags: List[str] = Field(default_factory=list)
     metadata_payload: Dict[str, Any] = Field(default_factory=dict)
     provenance_id: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

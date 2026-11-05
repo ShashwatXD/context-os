@@ -4,8 +4,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from sqlalchemy import select, func, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.domain.entities.asset import Asset, AssetType, CertificationStatus, ColumnMetadata
-from app.infrastructure.database.models import AssetModel
+from app.domain.entities.asset import (
+    Asset,
+    AssetType,
+    CertificationStatus,
+    ColumnMetadata,
+    SearchChunk,
+)
+from app.infrastructure.database.models import AssetModel, SearchChunkModel
 
 
 class AssetRepository:
@@ -32,6 +38,7 @@ class AssetRepository:
             existing.owner_name = asset.owner_name
             existing.columns_payload = columns_data
             existing.tags_payload = asset.tags
+            existing.acl_tags_payload = asset.acl_tags
             existing.metadata_payload = asset.metadata_payload
             existing.provenance_id = asset.provenance_id
             existing.updated_at = datetime.now(timezone.utc)
@@ -52,6 +59,7 @@ class AssetRepository:
                 owner_name=asset.owner_name,
                 columns_payload=columns_data,
                 tags_payload=asset.tags,
+                acl_tags_payload=asset.acl_tags,
                 metadata_payload=asset.metadata_payload,
                 provenance_id=asset.provenance_id,
                 created_at=asset.created_at,
@@ -154,9 +162,96 @@ class AssetRepository:
             owner_name=model.owner_name,
             columns=cols,
             tags=model.tags_payload or [],
+            acl_tags=getattr(model, "acl_tags_payload", []) or [],
             metadata_payload=model.metadata_payload or {},
             provenance_id=model.provenance_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
+
+    # Search Chunks Persistence (Storage Layer 3)
+    async def save_search_chunks(self, chunks: List[SearchChunk]) -> List[SearchChunk]:
+        for c in chunks:
+            model = SearchChunkModel(
+                id=c.id,
+                asset_id=c.asset_id,
+                chunk_type=c.chunk_type,
+                chunk_text=c.chunk_text,
+                metadata_filters=c.metadata_filters,
+                acl_tags=c.acl_tags,
+                embedding=c.embedding,
+                version_hash=c.version_hash,
+                created_at=c.created_at,
+            )
+            self.session.add(model)
+        await self.session.flush()
+        return chunks
+
+    async def delete_search_chunks_by_asset(self, asset_id: str) -> int:
+        """Deletion propagation: expunges search chunks and vector embeddings when asset is deleted/revoked."""
+        stmt = select(SearchChunkModel).where(SearchChunkModel.asset_id == asset_id)
+        res = await self.session.execute(stmt)
+        models = res.scalars().all()
+        count = len(models)
+        for m in models:
+            await self.session.delete(m)
+        await self.session.flush()
+        return count
+
+    async def get_search_chunks_by_asset(self, asset_id: str) -> List[SearchChunk]:
+        stmt = select(SearchChunkModel).where(SearchChunkModel.asset_id == asset_id)
+        res = await self.session.execute(stmt)
+        return [
+            SearchChunk(
+                id=m.id,
+                asset_id=m.asset_id,
+                chunk_type=m.chunk_type,
+                chunk_text=m.chunk_text,
+                metadata_filters=m.metadata_filters or {},
+                acl_tags=m.acl_tags or [],
+                embedding=m.embedding,
+                version_hash=m.version_hash,
+                created_at=m.created_at,
+            )
+            for m in res.scalars().all()
+        ]
+
+    async def search_chunks_filtered(
+        self,
+        query: str,
+        allowed_acl_tags: Optional[List[str]] = None,
+        limit: int = 20,
+    ) -> List[SearchChunk]:
+        """ACL-aware search chunk retrieval."""
+        stmt = select(SearchChunkModel)
+        if query:
+            stmt = stmt.where(SearchChunkModel.chunk_text.ilike(f"%{query}%"))
+        stmt = stmt.limit(limit)
+        res = await self.session.execute(stmt)
+        all_chunks = res.scalars().all()
+
+        filtered = []
+        for m in all_chunks:
+            # If no ACL restrictions on chunk, or wildcard allowed, or tag overlaps
+            chunk_acls = set(m.acl_tags or [])
+            if not chunk_acls:
+                filtered.append(m)
+            elif allowed_acl_tags is not None:
+                if "*" in allowed_acl_tags or chunk_acls.intersection(set(allowed_acl_tags)):
+                    filtered.append(m)
+
+        return [
+            SearchChunk(
+                id=m.id,
+                asset_id=m.asset_id,
+                chunk_type=m.chunk_type,
+                chunk_text=m.chunk_text,
+                metadata_filters=m.metadata_filters or {},
+                acl_tags=m.acl_tags or [],
+                embedding=m.embedding,
+                version_hash=m.version_hash,
+                created_at=m.created_at,
+            )
+            for m in filtered
+        ]
 

@@ -3,7 +3,7 @@
 import asyncio
 import sys
 from datetime import datetime, timezone
-from app.infrastructure.database.session import async_session_factory, init_db
+from app.infrastructure.database.session import async_session_factory, init_db, reset_db
 from app.domain.entities.source import Source, SourceType
 from app.domain.entities.asset import Asset, AssetType, CertificationStatus, ColumnMetadata
 from app.domain.relationships.relationship import Relationship, RelationshipType
@@ -27,7 +27,7 @@ async def seed_demo():
     print("==================================================================")
     print("  ContextOS — Seeding Synthetic Enterprise: Acme Analytics")
     print("==================================================================")
-    await init_db()
+    await reset_db()
 
     async with async_session_factory() as session:
         source_repo = SourceRepository(session)
@@ -153,12 +153,34 @@ async def seed_demo():
         )
         await source_repo.create(src_notion)
 
+        src_slack = Source(
+            id="src_acme_slack",
+            name="Acme Slack Workspace",
+            source_type=SourceType.SLACK,
+            freshness_threshold_seconds=900,
+            auth_type="OAUTH2",
+            oauth_scopes=["channels:read", "channels:history"],
+        )
+        await source_repo.create(src_slack)
+
+        src_github = Source(
+            id="src_acme_github",
+            name="Acme GitHub Repositories",
+            source_type=SourceType.GITHUB,
+            freshness_threshold_seconds=1800,
+            auth_type="OAUTH2",
+            oauth_scopes=["repo", "pull_requests:read"],
+        )
+        await source_repo.create(src_github)
+
         # 2. Run Ingestion Services
         print("-> [2/5] Ingesting metadata and extracting cryptographic provenance...")
         ingestion = IngestionService(session)
         await ingestion.sync_source(src_dw.id)
         await ingestion.sync_source(src_dbt.id)
         await ingestion.sync_source(src_notion.id)
+        await ingestion.sync_source(src_slack.id)
+        await ingestion.sync_source(src_github.id)
 
         # 3. Add Tableau Dashboard consuming raw data (the source of the discrepancy)
         dash_id = "ast_tableau_exec_revenue"

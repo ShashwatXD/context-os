@@ -9,6 +9,7 @@ from app.core.exceptions import ApprovalRequiredError, PermissionDeniedError
 from app.domain.agents.agent import AgentRun, RunStatus, SpanType, TraceSpan
 from app.infrastructure.repositories.trace_repo import TraceRepository
 from app.application.agent_execution.tool_registry import ToolRegistry
+from app.infrastructure.llm.grounded_llm import GroundedLLMProvider
 
 
 def sanitize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -30,6 +31,7 @@ class AgentRunner:
         self.session = session
         self.trace_repo = TraceRepository(session)
         self.tool_registry = ToolRegistry(session)
+        self.llm = GroundedLLMProvider()
 
     async def execute_task(
         self,
@@ -140,9 +142,11 @@ class AgentRunner:
 
             if run.status != RunStatus.WAITING_APPROVAL:
                 run.status = RunStatus.COMPLETED
-                run.output_response = (
-                    f"Successfully retrieved verified context for query: '{user_prompt}'. "
-                    f"Identified {len(matched_ids)} source-backed enterprise assets."
+                run.output_response = await self.llm.synthesize_agent_execution_response(
+                    user_prompt=user_prompt,
+                    matched_assets=matched_ids,
+                    tool_outputs=[],
+                    discrepancies_count=len(retrieved_data.get("discrepancies", [])),
                 )
 
         except Exception as exc:

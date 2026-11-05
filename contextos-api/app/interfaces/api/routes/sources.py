@@ -8,6 +8,8 @@ from app.infrastructure.repositories.source_repo import SourceRepository
 from app.application.ingestion.ingestion_service import IngestionService
 from app.interfaces.api.dependencies import get_source_repo, get_ingestion_service
 from app.interfaces.api.schemas.api_schemas import (
+    CheckpointResponse,
+    DeadLetterResponse,
     SourceCreateRequest,
     SourceResponse,
     SyncJobResponse,
@@ -29,6 +31,9 @@ async def list_sources(
             source_type=s.source_type.value,
             connection_config=s.connection_config,
             is_active=s.is_active,
+            freshness_threshold_seconds=s.freshness_threshold_seconds,
+            auth_type=s.auth_type,
+            oauth_scopes=s.oauth_scopes,
             last_sync_at=s.last_sync_at,
             last_sync_status=s.last_sync_status.value if s.last_sync_status else None,
             created_at=s.created_at,
@@ -63,6 +68,9 @@ async def create_source(
         source_type=saved.source_type.value,
         connection_config=saved.connection_config,
         is_active=saved.is_active,
+        freshness_threshold_seconds=saved.freshness_threshold_seconds,
+        auth_type=saved.auth_type,
+        oauth_scopes=saved.oauth_scopes,
         last_sync_at=saved.last_sync_at,
         last_sync_status=saved.last_sync_status.value if saved.last_sync_status else None,
         created_at=saved.created_at,
@@ -106,5 +114,43 @@ async def get_sync_history(
             completed_at=h.completed_at,
         )
         for h in history
+    ]
+
+
+@router.get("/{source_id}/checkpoint", response_model=Optional[CheckpointResponse])
+async def get_source_checkpoint(
+    source_id: str,
+    source_repo: SourceRepository = Depends(get_source_repo),
+):
+    chk = await source_repo.get_checkpoint(source_id)
+    if not chk:
+        return None
+    return CheckpointResponse(
+        id=chk.id,
+        source_id=chk.source_id,
+        cursor_value=chk.cursor_value,
+        checkpoint_metadata=chk.checkpoint_metadata,
+        updated_at=chk.updated_at,
+    )
+
+
+@router.get("/dlq/records", response_model=List[DeadLetterResponse])
+async def list_dead_letters(
+    source_id: Optional[str] = None,
+    limit: int = 50,
+    source_repo: SourceRepository = Depends(get_source_repo),
+):
+    dlqs = await source_repo.list_dead_letters(source_id=source_id, limit=limit)
+    return [
+        DeadLetterResponse(
+            id=d.id,
+            source_id=d.source_id,
+            raw_record_id=d.raw_record_id,
+            payload=d.payload,
+            error_reason=d.error_reason,
+            retry_count=d.retry_count,
+            failed_at=d.failed_at,
+        )
+        for d in dlqs
     ]
 

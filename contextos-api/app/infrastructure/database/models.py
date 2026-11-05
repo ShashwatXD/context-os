@@ -34,6 +34,9 @@ class SourceModel(Base):
     source_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     connection_config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    freshness_threshold_seconds: Mapped[int] = mapped_column(Integer, default=900)
+    auth_type: Mapped[str] = mapped_column(String(32), default="API_TOKEN")
+    oauth_scopes: Mapped[List[str]] = mapped_column(JSON, default=list)
     last_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_sync_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -90,6 +93,7 @@ class AssetModel(Base):
     columns_payload: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, default=list)
     tags_payload: Mapped[List[str]] = mapped_column(JSON, default=list)
     metadata_payload: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    acl_tags_payload: Mapped[List[str]] = mapped_column(JSON, default=list)
     provenance_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     embedding: Mapped[Optional[List[float]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -280,3 +284,77 @@ class EvaluationRunModel(Base):
     executed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class SyncCheckpointModel(Base):
+    __tablename__ = "sync_checkpoints"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("sources.id", ondelete="CASCADE"), index=True
+    )
+    cursor_value: Mapped[str] = mapped_column(String(255), nullable=False)
+    checkpoint_metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class DeadLetterRecordModel(Base):
+    __tablename__ = "dead_letter_records"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("sources.id", ondelete="CASCADE"), index=True
+    )
+    raw_record_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, default=1)
+    failed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class SourceRecordModel(Base):
+    """Storage Layer 1: Normalized original information and provider references."""
+    __tablename__ = "source_records"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("sources.id", ondelete="CASCADE"), index=True
+    )
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    record_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    raw_payload: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    version_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "external_id", name="uq_src_rec_source_external"),
+    )
+
+
+class SearchChunkModel(Base):
+    """Storage Layer 3: Searchable chunks with embeddings, metadata, and ACL tags."""
+    __tablename__ = "search_chunks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("assets.id", ondelete="CASCADE"), index=True
+    )
+    chunk_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_filters: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    acl_tags: Mapped[List[str]] = mapped_column(JSON, default=list)
+    embedding: Mapped[Optional[List[float]]] = mapped_column(JSON, nullable=True)
+    version_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+

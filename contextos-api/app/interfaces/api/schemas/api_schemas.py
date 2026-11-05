@@ -26,9 +26,30 @@ class SourceResponse(BaseModel):
     source_type: str
     connection_config: Dict[str, Any]
     is_active: bool
+    freshness_threshold_seconds: int = 900
+    auth_type: str = "API_TOKEN"
+    oauth_scopes: List[str] = Field(default_factory=list)
     last_sync_at: Optional[datetime] = None
     last_sync_status: Optional[str] = None
     created_at: datetime
+
+
+class CheckpointResponse(BaseModel):
+    id: str
+    source_id: str
+    cursor_value: str
+    checkpoint_metadata: Dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime
+
+
+class DeadLetterResponse(BaseModel):
+    id: str
+    source_id: str
+    raw_record_id: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    error_reason: str
+    retry_count: int
+    failed_at: datetime
 
 
 class SyncJobResponse(BaseModel):
