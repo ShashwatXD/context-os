@@ -5,7 +5,16 @@ import { Search, Filter, Layers, FileText, User } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { Asset } from "@/lib/types/api";
 
-const ASSET_TYPES = ["ALL", "TABLE", "TRANSFORMATION_MODEL", "DASHBOARD", "METRIC", "DOCUMENTATION"];
+const ASSET_TYPES = [
+  "ALL",
+  "TABLE",
+  "TRANSFORMATION_MODEL",
+  "DASHBOARD",
+  "METRIC",
+  "DOCUMENTATION",
+  "SLACK_CHANNEL",
+  "GITHUB_PR",
+];
 
 export default function CatalogPage() {
   const [assets, setAssets] = useState<Asset[]>([]);

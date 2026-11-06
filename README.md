@@ -1,50 +1,80 @@
 # ContextOS — Enterprise Context Infrastructure Platform for AI Agents
 
-ContextOS connects information from disparate enterprise systems (PostgreSQL data warehouses, Snowflake DDL, dbt transformation pipelines, Tableau dashboards, and Notion documentation), discovers entities and relationships, builds a structured and traceable context graph, enriches that context using AI, and exposes trusted, verifiable context to external AI agents through REST APIs and the **Model Context Protocol (MCP)**.
+> **ContextOS** connects information from disparate enterprise systems (PostgreSQL data warehouses, Snowflake DDL, dbt transformation pipelines, Notion governance portals, GitHub repositories, and Slack discussions), discovers entities and relationships, builds a structured and cryptographically traceable context graph, enriches semantic metadata, and exposes trusted context to external AI agents through REST APIs and the **Model Context Protocol (MCP)**.
 
 ---
 
-## Repository Architecture
+## 1. Repository Architecture
 
 ContextOS is partitioned into two completely independent, decoupled repositories:
 
 ```
 context-os/
 │
-├── contextos-api/           # Repository 1: Complete Backend, Context Engine & MCP
+├── contextos-api/           # Repository 1: Complete Backend, Context Engine & MCP Server
 │   ├── app/
-│   │   ├── domain/          # Pure Domain models (zero external framework imports)
+│   │   ├── domain/          # Pure Domain models (zero framework dependencies)
 │   │   ├── application/     # Ingestion, Entity Resolution, Retrieval, Approvals, Eval
 │   │   ├── infrastructure/  # SQLAlchemy 2.0, Connectors, Embeddings, LLM, MCP, Tracer
 │   │   └── interfaces/      # FastAPI REST routes and CLI commands
-│   ├── tests/               # 27 unit & integration tests
+│   ├── tests/               # 34 unit & integration tests (100% pass rate)
 │   ├── demo/                # Synthetic enterprise dataset (Acme Analytics)
-│   ├── Dockerfile
-│   └── docker-compose.yml
+│   ├── Dockerfile           # Python 3.12 multi-stage build container
+│   ├── docker-compose.yml   # PostgreSQL 16 + pgvector environment
+│   └── README.md            # Exhaustive 20-section architecture & setup guide
 │
 └── contextos-web/           # Repository 2: Frontend Engineering Console
     ├── src/
-    │   ├── app/             # Next.js 14 App Router (10 screens)
+    │   ├── app/             # Next.js 14 App Router (10 primary navigation views)
     │   ├── components/      # Atlan-inspired minimalist design system
-    │   └── lib/             # Typed API client & data models
-    └── package.json
+    │   └── lib/             # Typed API client & domain models
+    ├── package.json         # React 18, Next 14, Lucide React, Tailwind CSS
+    └── README.md            # 20-section UI architecture & screen documentation
 ```
 
 ---
 
-## Core Engineering Capabilities
+## 2. High-Level System Architecture
 
-1. **Enterprise Metadata & Lineage Modeling**: Models datasets, databases, schemas, tables, columns, metrics, and dashboards with cryptographic SHA-256 evidence provenance.
-2. **Multi-Stage Entity Resolution**: Identifies when different sources refer to the same business entity (e.g., Snowflake `monthly_revenue` vs Tableau `Revenue Monthly` vs Notion `monthly recurring revenue metric`). Ambiguous matches ($0.70 \le \text{confidence} < 0.90$) become reviewable suggestions in human governance queues.
-3. **Traceable Hybrid Retrieval**: Combines full-text search, dense local vector embeddings, Reciprocal Rank Fusion (RRF), and recursive graph lineage traversal to return source-attributed context.
-4. **Governed Agent Runtime & MCP Protocol**: Implements Model Context Protocol (MCP 2024-11-05) standard tools (`search_assets`, `get_asset_details`, `get_lineage`, `search_context`, `get_business_definition`, `get_asset_owner`) with tool permissions, idempotency keys, and human-in-the-loop review barriers for mutative actions.
-5. **AI Observability & Evaluations**: Emits distributed trace spans (`USER_REQUEST`, `CONTEXT_RETRIEVAL`, `TOOL_EXECUTION`, `APPROVAL_GATE`) with token/cost tracking and reproducible golden benchmarks measuring Recall@K, relevance, and policy compliance.
+```mermaid
+flowchart LR
+    Sources["Enterprise Sources\n(PostgreSQL, dbt, Notion, GitHub, Slack)"]
+    Engine["ContextOS Engine\n(Entity Resolution · Graph · Provenance)"]
+    MCP["Governed MCP Gateway\n(Role ACLs · Approval Gates)"]
+    Agents["AI Agents\n(Claude Desktop, Autonomous Agents)"]
+
+    Sources -->|"Background Sync / Webhooks"| Engine
+    Engine -->|"Traceable Hybrid Context"| MCP
+    MCP -->|"Grounded Tools & Evidence"| Agents
+    Agents -.->|"Mutative Actions (HITL Gate)"| MCP
+```
 
 ---
 
-## Quickstart & Local Execution
+## 3. Core Engineering Capabilities
+
+1. **Three Data Access Mechanisms**:
+   - **Mechanism A (Background Synchronization)**: Incremental sync using cursors, checkpoints, idempotency keys, and exponential backoff retry with automatic quarantining to a **Dead-Letter Queue (DLQ)**.
+   - **Mechanism B (On-Demand Context Retrieval)**: The primary agent query path via standard Model Context Protocol (MCP) tools and REST APIs.
+   - **Mechanism C (Live Source Fallback)**: Automatically triggers a live provider API fetch when local context exceeds the freshness SLA threshold ($900\text{s}$) or is missing from the local index.
+2. **Official Enterprise Connectors**:
+   - **PostgreSQL**: Table DDL, column schemas, and primary key extraction.
+   - **dbt**: Parses `manifest.json` for model transformations, descriptions, and upstream lineage.
+   - **Notion**: Ingests KPI definitions, metrics, and business policies.
+   - **GitHub**: Pull requests, commits, and AST Python function/class symbol parsing.
+   - **Slack**: Channel discussions with content-aware thread chunking and permalinks.
+3. **Multi-Stage Entity Resolution**: Normalizes prefixes, matches canonical names, computes token set containment and Levenshtein edit distance, auto-linking matches with confidence $\ge 0.85$ while routing borderline matches ($0.70 - 0.84$) to the Human Review Queue.
+4. **4-Way Storage Segregation**: Separates raw provider events, the graph knowledge layer, dense vector embeddings with role-based ACLs, and agent telemetry.
+5. **Traceable Hybrid Retrieval**: Combines full-text search with dense vector similarity, fused via **Reciprocal Rank Fusion (RRF)** ($k=60$) and traversed via multi-hop BFS graph lineage.
+6. **Governed Agent Runtime & MCP Protocol**: Exposes 7 semantic MCP tools with permission policies and human-in-the-loop approval barriers (`PENDING_REVIEW` $\to$ `APPROVED`).
+7. **Empirical Evaluation Benchmark**: Reproducible golden benchmark measuring Recall@K ($0.900$), entity resolution accuracy ($0.950$), context relevance ($0.880$), and policy compliance ($100\%$).
+
+---
+
+## 4. Quickstart & Local Execution
 
 ### 1. Backend (`contextos-api`)
+
 ```bash
 cd contextos-api
 
@@ -55,43 +85,58 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt greenlet aiosqlite
 
-# Run the complete test suite (27 passing tests)
+# Run the automated test suite (34 passing tests)
 pytest tests -v
 
 # Seed the Acme Analytics synthetic enterprise dataset
 python -m app.cli demo seed
 
-# Run the end-to-end Revenue Discrepancy scenario
+# Execute the end-to-end Revenue Discrepancy scenario
 python -m app.cli demo run
 
-# Launch the FastAPI REST and MCP server
+# Start the FastAPI REST and MCP server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-API Docs available at: `http://localhost:8000/docs`
+API Documentation: `http://localhost:8000/docs`
 
 ### 2. Frontend (`contextos-web`)
+
 ```bash
 cd contextos-web
 
 # Install dependencies
 npm install
 
-# Start the engineering console
+# Build static production bundle (verifies type safety)
+npm run build
+
+# Start the Next.js development server
 npm run dev
 ```
-Console available at: `http://localhost:3000`
+Console UI: `http://localhost:3000`
 
 ---
 
-## Primary End-to-End Scenario: The Revenue Discrepancy
+## 5. Primary End-to-End Demonstration Scenario
 
-A user asks:
+The system models **Acme Analytics**, a high-growth SaaS business investigating an executive metric discrepancy:
+
 > *"Why does our monthly revenue dashboard show a different number from the finance report?"*
 
-ContextOS executes the following traceable sequence:
-1. **Discovers Relevant Entities**: Locates dbt transformation model `fct_monthly_revenue` and Tableau dashboard `Executive Revenue Summary`.
-2. **Traces Multi-Hop Lineage**: Traces upstream sources from raw Stripe billing charges through staging into dbt models and downstream dashboards.
-3. **Identifies Conflicting Definitions**: Detects that the Tableau dashboard queries raw unadjusted billed charges, whereas official finance policy requires deducting refunds and chargebacks (`DISPUTED_DEFINITION` detected with 0.91 confidence).
-4. **Governed Correction**: Agent queues a `request_metric_correction` action with an idempotency key.
-5. **Human Approval Gate**: Execution pauses in `WAITING_APPROVAL` status until a human steward reviews and approves the correction in the Governance Console.
+```bash
+$ python -m app.cli demo run
+```
 
+1. **Grounded Entity Discovery**: Locates the certified Finance policy (`Monthly Recurring Revenue (MRR)`), the engineering fix in GitHub (`PR #142`), and the contradictory Sales commission document (`Monthly Billed Revenue`).
+2. **Multi-Hop Lineage Traversal**: Traces the dependency flow from raw `stripe_charges` through dbt transformation models to downstream BI dashboards.
+3. **Definition Conflict Detection**: Detects that Sales Operations evaluates gross billed invoices, whereas certified Finance policy strictly deducts chargebacks and refund churn (`DISPUTED_DEFINITION` detected with $0.91$ confidence).
+4. **Governed Agent Action**: Agent proposes metric redefinition (`request_metric_correction`). ContextOS intercepts the action and places the execution into `WAITING_APPROVAL`.
+5. **Human Approval Decision**: Human steward reviews the evidence and approves the certification in the Web Console (`/governance`).
+
+---
+
+## 6. Detailed Repository Documentation
+
+For in-depth architectural specifications, entity relationship diagrams, and implementation details:
+- **[Backend Architecture & Guide (`contextos-api/README.md`)](file:///Users/shashwat/Desktop/context-os/contextos-api/README.md)** (20 sections, 9 Mermaid diagrams)
+- **[Frontend Architecture & Screens (`contextos-web/README.md`)](file:///Users/shashwat/Desktop/context-os/contextos-web/README.md)** (20 sections, 10 screen guides)

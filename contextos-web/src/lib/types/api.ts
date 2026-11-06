@@ -4,9 +4,30 @@ export interface Source {
   source_type: string;
   connection_config: Record<string, any>;
   is_active: boolean;
+  freshness_threshold_seconds?: number;
+  auth_type?: string;
+  oauth_scopes?: string[];
   last_sync_at?: string;
   last_sync_status?: string;
   created_at: string;
+}
+
+export interface SyncCheckpoint {
+  id: string;
+  source_id: string;
+  cursor_value: string;
+  checkpoint_metadata: Record<string, any>;
+  updated_at: string;
+}
+
+export interface DeadLetterRecord {
+  id: string;
+  source_id: string;
+  raw_record_id: string;
+  payload: Record<string, any>;
+  error_reason: string;
+  retry_count: number;
+  failed_at: string;
 }
 
 export interface SyncJob {
@@ -90,6 +111,15 @@ export interface DiscrepancyReport {
   evidence_asset_ids: string[];
 }
 
+export interface AISummary {
+  headline: string;
+  root_cause_analysis: string;
+  evidence_trail: string[];
+  suggested_remediation: string;
+  confidence_score: number;
+  grounded_model: string;
+}
+
 export interface ContextResponse {
   query: string;
   matched_entities: MatchedEntity[];
@@ -98,6 +128,8 @@ export interface ContextResponse {
     edges: Array<any>;
   };
   discrepancies: DiscrepancyReport[];
+  freshness_warning?: string;
+  ai_summary?: AISummary;
   trace_id: string;
 }
 

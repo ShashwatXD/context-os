@@ -30,3 +30,10 @@ pnpm-debug.log*
 .env.test.local
 .env.production.local
 
+# Private Career & Interview Assets
+interview_prep.md
+INTERVIEW_PREP.md
+interview/
+*.interview.md
+
+

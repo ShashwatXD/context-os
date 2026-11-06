@@ -1,9 +1,11 @@
 import {
   Asset,
   ContextResponse,
+  DeadLetterRecord,
   EvaluationRun,
   LineageGraph,
   Source,
+  SyncCheckpoint,
   ApprovalItem,
   AgentRun,
 } from "../types/api";
@@ -42,6 +44,12 @@ export const api = {
   getSources: () => fetchJson<Source[]>("/sources"),
   syncSource: (sourceId: string) =>
     fetchJson<any>(`/sources/${sourceId}/sync`, { method: "POST" }),
+  getCheckpoint: (sourceId: string) =>
+    fetchJson<SyncCheckpoint | null>(`/sources/${sourceId}/checkpoint`),
+  getDeadLetters: (sourceId?: string) => {
+    const q = sourceId ? `?source_id=${sourceId}` : "";
+    return fetchJson<DeadLetterRecord[]>(`/sources/dlq/records${q}`);
+  },
 
   // Catalog Assets & Lineage
   getAssets: (params?: { query?: string; type?: string; certification?: string }) => {
@@ -79,6 +87,19 @@ export const api = {
 
   // Agents & Traces
   getAgents: () => fetchJson<any[]>("/agents"),
+  runAgent: (agentId: string, payload: { user_prompt: string; tool_sequence?: any[] }) =>
+    fetchJson<{
+      run_id: string;
+      status: string;
+      output_response: string;
+      latency_ms: number;
+      total_tokens: number;
+      retrieved_context_ids: string[];
+      spans_count: number;
+    }>(`/agents/${agentId}/run`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   getAgentRuns: (agentId: string) => fetchJson<AgentRun[]>(`/agents/${agentId}/runs`),
   getTrace: (runId: string) => fetchJson<AgentRun>(`/traces/${runId}`),
 
