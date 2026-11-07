@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -16,6 +17,7 @@ from google.genai import errors, types
 MISSING_KEY = "No Gemini API key. Add GEMINI_API_KEY=... to your .env file and restart ContextOS."
 
 # Finish reasons that mean "the model stopped on purpose, but not because it was done".
+RETRYABLE = {429, 500, 503}  # rate limit, transient server errors
 BLOCKED = {"SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}
 
 
@@ -72,7 +74,7 @@ class LLM:
 
     # ---- embeddings (meaning search) ----------------------------------------
 
-    def embed(self, texts: list[str], *, model: str, task: str, dim: int = 768, batch: int = 100) -> list[list[float]]:
+    def embed(self, texts: list[str], *, model: str, task: str, dim: int = 768, batch: int = 32) -> list[list[float]]:
         """Turn texts into meaning vectors.
 
         task = "RETRIEVAL_DOCUMENT" for stored messages, "RETRIEVAL_QUERY" for a search question: the model
@@ -82,14 +84,14 @@ class LLM:
         vectors: list[list[float]] = []
         for i in range(0, len(texts), batch):
             chunk = texts[i : i + batch]
-            try:
-                resp = self.client.models.embed_content(
+            resp = self._with_backoff(
+                model,
+                lambda chunk=chunk: self.client.models.embed_content(
                     model=model,
                     contents=chunk,
                     config=types.EmbedContentConfig(task_type=task, output_dimensionality=dim),
-                )
-            except errors.APIError as e:
-                raise LLMError(_describe(e, model)) from e
+                ),
+            )
             vectors += [list(e.values or []) for e in resp.embeddings or []]
             bucket = self.usage[model]
             bucket["input"] += sum(len(t) for t in chunk) // 4  # estimate; the embed API doesn't report tokens
@@ -97,6 +99,13 @@ class LLM:
         if len(vectors) != len(texts):
             raise LLMError("Gemini returned the wrong number of embeddings.")
         return vectors
+
+    def count_tokens(self, text: str, *, model: str) -> int:
+        """Exact token count from Gemini's own tokenizer (used by the benchmark)."""
+        try:
+            return self.client.models.count_tokens(model=model, contents=text).total_tokens or 0
+        except errors.APIError as e:
+            raise LLMError(_describe(e, model)) from e
 
     # ---- tool calling (used by Ask) -----------------------------------------
 
@@ -158,11 +167,20 @@ class LLM:
 
     # ---- internals ----------------------------------------------------------
 
+    def _with_backoff(self, model: str, call, waits: tuple[float, ...] = (5, 15, 30, 60)):
+        """Retry rate limits (429) and temporary overload (500/503) with growing waits; other errors fail fast."""
+        for attempt in range(len(waits) + 1):
+            try:
+                return call()
+            except errors.APIError as e:
+                if e.code not in RETRYABLE or attempt == len(waits):
+                    raise LLMError(_describe(e, model)) from e
+                time.sleep(waits[attempt])
+
     def _generate(self, model: str, contents, config: types.GenerateContentConfig):
-        try:
-            resp = self.client.models.generate_content(model=model, contents=contents, config=config)
-        except errors.APIError as e:
-            raise LLMError(_describe(e, model)) from e
+        resp = self._with_backoff(
+            model, lambda: self.client.models.generate_content(model=model, contents=contents, config=config)
+        )
 
         self._record(model, resp)
         if resp.prompt_feedback and resp.prompt_feedback.block_reason:

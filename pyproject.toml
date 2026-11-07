@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "rich>=13",
     "numpy>=1.26",
+    "mcp>=2.3",
 ]
 
 [project.optional-dependencies]
@@ -46,3 +47,6 @@ src = [".", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E741", "B008"]  # FastAPI uses Depends()/Form() as defaults by design
+
+[tool.ruff.lint.per-file-ignores]
+"contextos/bench/dataset.py" = ["E501"]  # long realistic message strings

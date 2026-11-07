@@ -135,6 +135,38 @@ def cmd_status(args, cfg, store):
         console.print(f"  {src.name:8} {state}  {counts.get(src.name, 0)} stored{when}")
 
 
+def cmd_mcp(args, cfg, store):
+    """Serve ContextOS over MCP stdio. Nothing may be printed to stdout here: it carries the protocol."""
+    from contextos.mcp_server import main as serve
+
+    serve()
+
+
+def cmd_bench(args, cfg, store):
+    """Measure ContextOS on a labeled benchmark inbox (uses Gemini; costs a few cents)."""
+    from contextos.bench.run import run, save
+    from contextos.llm import LLMError
+
+    llm = _require_llm()
+    try:
+        report = run(cfg, llm, progress=lambda m: console.print(f"[dim]{m}[/dim]"))
+    except LLMError as e:
+        _llm_failed(e)
+    b, sr = report["briefing"], report["search"]
+    console.print("\n[bold]Briefing[/bold]")
+    console.print(f"  token reduction        {b['token_reduction_pct']}%  ({b['naive_tokens']:,} → {b['sent_tokens']:,} tokens)")
+    console.print(f"  reading reduction      {b['reading_reduction_x']}×  ({b['raw_words']:,} → {b['briefing_words']} words)")
+    console.print(f"  needs-you recall       {b['needs_you_recall_pct']}%  missed: {b['needs_you_missed'] or 'none'}")
+    console.print(f"  citations valid        {b['citations_valid_pct']}%  of {b['citations_total']}")
+    console.print(f"  handled ask flagged    {'yes (bad)' if b['already_handled_wrongly_flagged'] else 'no (good)'}")
+    console.print(f"  time                   {b['seconds']}s")
+    console.print("\n[bold]Search (recall@5 on 25 questions)[/bold]")
+    for name, r in sr.items():
+        lat = f"  p50 {r['latency_ms_p50']} ms, p95 {r['latency_ms_p95']} ms" if r.get("latency_ms_p50") else ""
+        console.print(f"  {name:15} {r['recall_at_5_pct']:5}%{lat}")
+    console.print(f"\n[dim]Saved to {save(report, cfg.home)}[/dim]")
+
+
 def cmd_web(args, cfg, store):
     import threading
     import webbrowser
@@ -154,6 +186,12 @@ def cmd_web(args, cfg, store):
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="contextos", description="ContextOS: what happened today, across your inboxes.")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("mcp", help="run as an MCP server so AI agents can use your context (stdio)")
+    p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser("bench", help="measure quality on a labeled benchmark inbox")
+    p.set_defaults(fn=cmd_bench)
 
     p = sub.add_parser("web", help="start the website")
     p.add_argument("--port", type=int, default=8000)

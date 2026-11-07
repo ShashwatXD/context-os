@@ -76,9 +76,12 @@ def test_bad_finish_reasons_raise(finish, needle):
 
 
 @pytest.mark.parametrize("code,needle", [(400, "API key"), (404, "wasn't found"), (429, "rate limit")])
-def test_api_errors_become_friendly(code, needle):
+def test_api_errors_become_friendly(code, needle, monkeypatch):
+    import contextos.llm.gemini as g
+
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
     body = {"error": {"code": code, "message": "API key not valid" if code == 400 else "x", "status": "X"}}
-    llm, _ = make(errors.ClientError(code, body))
+    llm, _ = make(*[errors.ClientError(code, body)] * 5)
     with pytest.raises(LLMError, match=needle):
         llm.text(model="m", system="s", prompt="p")
 
@@ -98,6 +101,24 @@ def test_embed_batches_and_uses_task_type():
     models = EmbedModels()
     llm = LLM(client=SimpleNamespace(models=models))
     out = llm.embed(["a"] * 150, model="gemini-embedding-001", task="RETRIEVAL_DOCUMENT", dim=768)
-    assert len(out) == 150 and [r["n"] for r in models.requests] == [100, 50]
+    assert len(out) == 150 and [r["n"] for r in models.requests] == [32, 32, 32, 32, 22]
     cfg = models.requests[0]["config"]
     assert cfg.task_type == "RETRIEVAL_DOCUMENT" and cfg.output_dimensionality == 768
+
+
+def test_rate_limit_is_retried_then_succeeds(monkeypatch):
+    import contextos.llm.gemini as g
+
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    body = {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}}
+    calls = []
+
+    class Flaky:
+        def embed_content(self, *, model, contents, config):
+            calls.append(1)
+            if len(calls) < 3:
+                raise errors.ClientError(429, body)
+            return types.EmbedContentResponse(embeddings=[types.ContentEmbedding(values=[1.0])])
+
+    llm = LLM(client=SimpleNamespace(models=Flaky()))
+    assert llm.embed(["x"], model="m", task="RETRIEVAL_QUERY") == [[1.0]] and len(calls) == 3

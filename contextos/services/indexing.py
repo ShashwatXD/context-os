@@ -13,7 +13,7 @@ from contextos.llm import LLM
 from contextos.pipeline.search import embed_text, to_blob
 from contextos.storage import Store
 
-BATCH = 100          # messages per embedding request
+BATCH = 32           # messages per embedding request (small enough for free-tier token limits)
 MAX_PER_RUN = 3000   # cap per run so a huge first backlog doesn't block a sync; the rest continues next time
 
 

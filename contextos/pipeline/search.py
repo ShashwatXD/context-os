@@ -66,7 +66,7 @@ def embed_text(m: Message) -> str:
     """What gets embedded for a message: who, where and what, so 'Priya's email about the contract' matches."""
     head = f"{m.source} {m.channel} from {m.author}"
     body = f"{m.title}\n{m.text}" if m.title else m.text
-    return f"{head}: {body}"[:2000]
+    return f"{head}: {body}"[:1200]  # the start of a message carries its meaning; keeps token use low
 
 
 # ---- dates ------------------------------------------------------------------
