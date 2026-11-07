@@ -22,21 +22,34 @@ class Job:
     finished: bool = False
     result: dict | None = None
     error: str | None = None
+    meta: dict = field(default_factory=dict)  # e.g. the question being asked, the briefing window
 
     def emit(self, type_: str, **data) -> None:
         self.events.append({"type": type_, **data})
 
 
 class Jobs:
+    """Jobs live on the server, so a page you navigate away from can reconnect to them later."""
+
     def __init__(self):
         self._jobs: dict[str, Job] = {}
+        self._lock = threading.Lock()
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
-    def start(self, kind: str, fn: Callable[[Job], dict | None]) -> Job:
-        job = Job(uuid.uuid4().hex[:12], kind)
-        self._jobs[job.id] = job
+    def running(self, kind: str) -> Job | None:
+        """The unfinished job of this kind, if any."""
+        return next((j for j in reversed(list(self._jobs.values())) if j.kind == kind and not j.finished), None)
+
+    def start(self, kind: str, fn: Callable[[Job], dict | None], meta: dict | None = None) -> Job:
+        """Start a job. If one of the same kind is already running, return that one instead of a duplicate."""
+        with self._lock:
+            existing = self.running(kind)
+            if existing:
+                return existing
+            job = Job(uuid.uuid4().hex[:12], kind, meta=meta or {})
+            self._jobs[job.id] = job
 
         def run():
             try:

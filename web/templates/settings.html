@@ -6,16 +6,11 @@
     <p class="eyebrow">Keys, tokens and preferences</p>
     <h1>Settings</h1>
   </div>
+  <span class="status-pill" title="The Gemini key is read from GEMINI_API_KEY in .env">
+    <span class="dot {{ 'ok' if has_key else 'off' }}"></span>Gemini {{ 'configured' if has_key else 'not configured' }}
+  </span>
 </section>
 {% if saved %}<p class="notice ok">Saved.</p>{% endif %}
-
-<section class="card key-status">
-  <div>
-    <h2>Gemini API key</h2>
-    <p class="muted small">Read from <code>GEMINI_API_KEY</code> in your <code>.env</code> file. It is never stored or shown here.</p>
-  </div>
-  <span class="badge {{ 'ok' if has_key else 'warn' }}">{{ 'found' if has_key else 'missing' }}</span>
-</section>
 
 <form class="card settings" method="post" action="/settings">
   <fieldset>
@@ -25,7 +20,7 @@
       <textarea name="about_me" rows="2" placeholder="Engineer at Acme. I care about direct asks, reviews and deadlines.">{{ cfg.about_me }}</textarea>
     </label>
     <label>Mute <span class="muted small">(comma-separated channels or senders to ignore)</span>
-      <input name="mute" value="{{ cfg.mute | join(', ') }}" placeholder="#random, linkedin.com">
+      <input name="mute" value="{{ cfg.mute | join(', ') }}" placeholder="#random, newsletter">
     </label>
   </fieldset>
 

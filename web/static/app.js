@@ -1,4 +1,5 @@
-// ContextOS front end: no framework. Buttons post forms; long work streams progress over SSE.
+// ContextOS front end: no framework. Buttons post forms; long work runs as server-side jobs whose
+// progress streams over SSE. Jobs live on the server, so leaving a page and coming back reconnects to them.
 
 function form(data) {
   const f = new FormData();
@@ -12,71 +13,108 @@ async function post(url, data) {
   return res;
 }
 
-// Start a background job and stream its events into a progress box.
-async function runJob(url, data, box, { onStep, onDone, onError } = {}) {
+function progressLine(box, text, cls) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  if (cls) div.className = cls;
+  box.appendChild(div);
+}
+
+// Stream a job's events into a progress box. Events replay from the start, so this also works
+// when reconnecting to a job that started before the page loaded.
+function watchJob(jobId, box, { intro, onDone, onError } = {}) {
   box.hidden = false;
   box.classList.remove("finished");
   box.innerHTML = "";
-  const line = (text, cls) => {
-    const div = document.createElement("div");
-    div.textContent = text;
-    if (cls) div.className = cls;
-    box.appendChild(div);
-  };
-  line("Starting…");
-  let job;
-  try {
-    job = (await (await post(url, data)).json()).job;
-  } catch (e) {
-    line(e.message, "err");
+  if (intro) progressLine(box, intro);
+  const fail = (text) => {
+    progressLine(box, text, "err");
     box.classList.add("finished");
     onError && onError();
-    return;
-  }
-  const es = new EventSource(`/api/jobs/${job}/events`);
+  };
+  const es = new EventSource(`/api/jobs/${jobId}/events`);
   es.onmessage = (ev) => {
     const e = JSON.parse(ev.data);
     if (e.type === "progress" || e.type === "step") {
-      line(e.text);
-      onStep && onStep(e);
+      progressLine(box, e.text);
     } else if (e.type === "done") {
       es.close();
       box.classList.add("finished");
       onDone && onDone(e.result || {});
     } else if (e.type === "error") {
       es.close();
-      line(e.text, "err");
-      box.classList.add("finished");
-      onError && onError();
+      fail(e.text);
     }
   };
-  es.onerror = () => {
-    es.close();
-    line("Lost connection to ContextOS.", "err");
+  es.onerror = () => { es.close(); fail("Lost connection to ContextOS."); };
+}
+
+// Start a job (or join the one already running of the same kind) and watch it.
+async function startJob(url, data, box, handlers = {}) {
+  box.hidden = false;
+  box.innerHTML = "";
+  progressLine(box, "Starting…");
+  try {
+    const { job } = await (await post(url, data)).json();
+    watchJob(job, box, handlers);
+  } catch (e) {
+    progressLine(box, e.message, "err");
     box.classList.add("finished");
-    onError && onError();
-  };
+    handlers.onError && handlers.onError();
+  }
 }
 
 // ---- Today ---------------------------------------------------------------
+
+function refreshHandlers(btn, windowKind) {
+  const box = document.getElementById("progress");
+  return {
+    onDone: (r) => {
+      if (r.empty) {
+        progressLine(box, "No messages in this window yet.");
+        if (btn) btn.disabled = false;
+      } else {
+        location.href = `/today?window=${windowKind}`;
+      }
+    },
+    onError: () => btn && (btn.disabled = false),
+  };
+}
 
 function refresh() {
   const btn = document.getElementById("refresh");
   if (!btn || btn.disabled) return;
   btn.disabled = true;
   const windowKind = btn.dataset.window || "today";
-  runJob("/api/refresh", { window: windowKind }, document.getElementById("progress"), {
-    onDone: (r) => {
-      if (r.empty) {
-        document.getElementById("progress").lastChild.textContent = "No messages in this window yet.";
-        btn.disabled = false;
-      } else {
-        location.href = `/today?window=${windowKind}`;
-      }
-    },
-    onError: () => (btn.disabled = false),
-  });
+  startJob("/api/refresh", { window: windowKind }, document.getElementById("progress"), refreshHandlers(btn, windowKind));
 }
+
+// ---- Ask -----------------------------------------------------------------
+
+const DRAFT_KEY = "contextos.ask.draft";
+
+function askHandlers(question) {
+  const f = document.getElementById("ask-form");
+  const input = f.querySelector("input[name=question]");
+  const btn = f.querySelector("button");
+  const box = document.getElementById("ask-progress");
+  btn.disabled = input.disabled = true;
+  const reset = () => { btn.disabled = input.disabled = false; input.focus(); };
+  return {
+    intro: `Asking: ${question}`,
+    onDone: async (r) => {
+      const html = await (await fetch(`/ask/${r.ask_id}/card`)).text();
+      document.getElementById("answers").insertAdjacentHTML("afterbegin", html);
+      box.hidden = true;
+      input.value = "";
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch {}
+      reset();
+    },
+    onError: reset,
+  };
+}
+
+// ---- events --------------------------------------------------------------
 
 document.addEventListener("click", async (ev) => {
   const t = ev.target.closest("button, a");
@@ -87,7 +125,7 @@ document.addEventListener("click", async (ev) => {
     return refresh();
   }
 
-  // Done / Tomorrow / Undo and 👍 👎 on briefing items: swap the card in place.
+  // Done / Tomorrow / Undo and votes on briefing items: swap the card in place.
   const card = t.closest(".item");
   if (card && (t.dataset.action || t.dataset.vote)) {
     ev.preventDefault();
@@ -95,8 +133,7 @@ document.addEventListener("click", async (ev) => {
     const url = t.dataset.action ? "/items/action" : "/items/vote";
     const extra = t.dataset.action ? { action: t.dataset.action } : { vote: t.dataset.vote };
     try {
-      const html = await (await post(url, { ...base, ...extra })).text();
-      card.outerHTML = html;
+      card.outerHTML = await (await post(url, { ...base, ...extra })).text();
     } catch (e) {
       alert(e.message);
     }
@@ -109,16 +146,11 @@ document.addEventListener("click", async (ev) => {
     return;
   }
 
-  if (t.id === "sync-now") {
+  if (t.id === "sync-now" || t.id === "gmail-connect") {
     t.disabled = true;
-    return runJob("/api/sync", {}, document.getElementById("progress"),
-                  { onDone: () => location.reload(), onError: () => (t.disabled = false) });
-  }
-
-  if (t.id === "gmail-connect") {
-    t.disabled = true;
-    return runJob("/api/gmail/connect", {}, document.getElementById("progress"),
-                  { onDone: () => location.reload(), onError: () => (t.disabled = false) });
+    const url = t.id === "sync-now" ? "/api/sync" : "/api/gmail/connect";
+    return startJob(url, {}, document.getElementById("progress"),
+                    { onDone: () => location.reload(), onError: () => (t.disabled = false) });
   }
 });
 
@@ -127,28 +159,44 @@ document.addEventListener("submit", async (ev) => {
 
   if (f.matches("[data-missed]")) {
     ev.preventDefault();
-    const html = await (await post("/feedback/missed", new FormData(f))).text();
-    f.outerHTML = html;
+    f.outerHTML = await (await post("/feedback/missed", new FormData(f))).text();
   }
 
   if (f.id === "ask-form") {
     ev.preventDefault();
-    const input = f.querySelector("input[name=question]");
-    const question = input.value.trim();
+    const question = f.querySelector("input[name=question]").value.trim();
     if (!question) return;
-    const btn = f.querySelector("button");
-    btn.disabled = input.disabled = true;
-    const box = document.getElementById("ask-progress");
-    const reset = () => { btn.disabled = input.disabled = false; input.focus(); };
-    await runJob("/api/ask", { question }, box, {
-      onDone: async (r) => {
-        const html = await (await fetch(`/ask/${r.ask_id}/card`)).text();
-        document.getElementById("answers").insertAdjacentHTML("afterbegin", html);
-        box.hidden = true;
-        input.value = "";
-        reset();
-      },
-      onError: reset,
-    });
+    startJob("/api/ask", { question }, document.getElementById("ask-progress"), askHandlers(question));
   }
+});
+
+// ---- restore state on page load ------------------------------------------
+
+document.addEventListener("DOMContentLoaded", () => {
+  // Reconnect to work that is still running on the server.
+  for (const box of document.querySelectorAll(".progress[data-job]")) {
+    const { job, kind } = box.dataset;
+    if (kind === "refresh") {
+      const btn = document.getElementById("refresh");
+      if (btn) btn.disabled = true;
+      watchJob(job, box, refreshHandlers(btn, box.dataset.window || "today"));
+    } else if (kind === "ask") {
+      const input = document.getElementById("question");
+      if (input) input.value = box.dataset.question || "";
+      watchJob(job, box, askHandlers(box.dataset.question || ""));
+    } else {
+      const btn = document.getElementById(kind === "sync" ? "sync-now" : "gmail-connect");
+      if (btn) btn.disabled = true;
+      watchJob(job, box, { onDone: () => location.reload(), onError: () => btn && (btn.disabled = false) });
+    }
+  }
+
+  // Keep a half-typed question when switching tabs.
+  const input = document.getElementById("question");
+  if (input && !input.value) {
+    try { input.value = sessionStorage.getItem(DRAFT_KEY) || ""; } catch {}
+  }
+  input?.addEventListener("input", () => {
+    try { sessionStorage.setItem(DRAFT_KEY, input.value); } catch {}
+  });
 });

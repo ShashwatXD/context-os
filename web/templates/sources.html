@@ -10,13 +10,13 @@
     <button class="btn" id="sync-now" {% if not any_source %}disabled{% endif %}>Sync now</button>
   </div>
 </section>
-<div id="progress" class="progress" hidden></div>
+{% set rj = running.sync or running.gmail %}<div id="progress" class="progress" hidden{% if rj %} data-job="{{ rj.id }}" data-kind="{{ rj.kind }}"{% endif %}></div>
 
 <section class="grid">
   {% for r in rows %}
   <div class="card source">
     <div class="source-head">
-      <h2>{{ {'gmail': '✉️ Gmail', 'slack': '💬 Slack', 'discord': '🎮 Discord'}[r.name] }}</h2>
+      <h2>{{ {'gmail': 'Gmail', 'slack': 'Slack', 'discord': 'Discord'}[r.name] }}</h2>
       <span class="badge {{ 'ok' if r.configured else '' }}">{{ 'connected' if r.configured else 'not connected' }}</span>
     </div>
     <p class="muted small">

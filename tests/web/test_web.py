@@ -217,3 +217,55 @@ def test_llm_requires_env_key(monkeypatch):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     with pytest.raises(LLMError, match="GEMINI_API_KEY"):
         LLM()
+
+
+def test_running_job_is_reused_and_pages_reconnect(client, store):
+    import threading
+
+    store.upsert([msg(1, ts=datetime.now(UTC))])
+    gate = threading.Event()
+    original = client.llm.json
+
+    def slow_json(**kw):
+        gate.wait(5)
+        return original(**kw)
+
+    client.llm.json = slow_json
+    client.llm.json_out = {"headline": "", "needs_you": [], "important": [], "fyi": []}
+
+    first = client.post("/api/refresh", data={"window": "24h"}).json()["job"]
+    second = client.post("/api/refresh", data={"window": "24h"}).json()["job"]
+    assert first == second  # clicking twice joins the same job
+
+    # Leaving and coming back: the page carries the running job so the browser can reattach.
+    html = client.get("/today").text
+    assert f'data-job="{first}"' in html and 'data-kind="refresh"' in html and 'data-window="24h"' in html
+
+    gate.set()
+    assert wait_job(client, first)[-1]["type"] == "done"
+    assert "data-job=" not in client.get("/today").text
+
+
+def test_running_ask_shows_question_on_return(client, store):
+    import threading
+
+    store.upsert([msg(1, ts=datetime.now(UTC))])
+    gate = threading.Event()
+    client.llm.turns = [turn("done")]
+    original = client.llm.tool_turn
+
+    def slow_turn(**kw):
+        gate.wait(5)
+        return original(**kw)
+
+    client.llm.tool_turn = slow_turn
+    job = client.post("/api/ask", data={"question": "what about the launch?"}).json()["job"]
+    html = client.get("/ask").text
+    assert f'data-job="{job}"' in html and 'data-question="what about the launch?"' in html
+    gate.set()
+    wait_job(client, job)
+
+
+def test_window_choice_is_remembered(client):
+    client.get("/today?window=24h")
+    assert 'href="/today?window=24h" class="on"' in client.get("/today").text  # no ?window= on return

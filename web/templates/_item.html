@@ -5,7 +5,7 @@
     {% if it.sources %}
     <div class="sources">
       {% for s in it.sources[:5] %}
-      <a class="chip" href="{{ s.url or '#' }}" target="_blank" rel="noopener" title="{{ s.tooltip }}">{{ s.icon }} {{ s.label }}</a>
+      <a class="chip" href="{{ s.url or '#' }}" target="_blank" rel="noopener" title="{{ s.tooltip }}"><span class="chip-src">{{ s.icon }}</span> {{ s.label }}</a>
       {% endfor %}
       {% if it.sources|length > 5 %}<span class="chip muted">+{{ it.sources|length - 5 }}</span>{% endif %}
     </div>
@@ -15,14 +15,14 @@
   </div>
   <div class="item-actions">
     {% if it.state == 'open' %}
-      <button class="btn ghost" data-action="done" title="Mark as handled">✓ Done</button>
-      <button class="btn ghost" data-action="snooze" title="Show it again tomorrow morning">⏰ Tomorrow</button>
+      <button class="btn ghost" data-action="done" title="Mark as handled">Done</button>
+      <button class="btn ghost" data-action="snooze" title="Show it again tomorrow morning">Tomorrow</button>
     {% else %}
       <button class="btn ghost" data-action="reopen">Undo</button>
     {% endif %}
     <span class="votes" title="Was this useful? Your votes become your eval set.">
-      <button class="vote {{ 'on' if it.vote == 1 }}" data-vote="1" aria-label="Useful">👍</button>
-      <button class="vote {{ 'on' if it.vote == -1 }}" data-vote="-1" aria-label="Not useful">👎</button>
+      <button class="vote {{ 'on' if it.vote == 1 }}" data-vote="1" aria-label="Useful" title="Useful">↑</button>
+      <button class="vote {{ 'on' if it.vote == -1 }}" data-vote="-1" aria-label="Not useful" title="Not useful">↓</button>
     </span>
   </div>
 </article>

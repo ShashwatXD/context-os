@@ -14,11 +14,11 @@ from contextos.pipeline.digest import SECTIONS
 from contextos.storage import DigestRecord, ItemAction, Store
 
 SECTION_INFO = {
-    "needs_you": ("Needs you", "📌"),
-    "important": ("Important", "⚡"),
-    "fyi": ("FYI", "📰"),
+    "needs_you": ("Needs you", ""),
+    "important": ("Important", ""),
+    "fyi": ("FYI", ""),
 }
-SOURCE_ICON = {"gmail": "✉️", "slack": "💬", "discord": "🎮"}
+SOURCE_ICON = {"gmail": "Gmail", "slack": "Slack", "discord": "Discord"}
 
 
 def item_key(item: dict) -> str:

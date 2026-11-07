@@ -22,7 +22,7 @@
   {% endfor %}
 </div>
 
-<div id="ask-progress" class="progress" hidden></div>
+<div id="ask-progress" class="progress" hidden{% if running.ask %} data-job="{{ running.ask.id }}" data-kind="ask" data-question="{{ running.ask.meta.question }}"{% endif %}></div>
 <div id="answers">
   {% for a in asks %}{% include "_answer.html" %}{% endfor %}
 </div>

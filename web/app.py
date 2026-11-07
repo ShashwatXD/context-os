@@ -84,6 +84,8 @@ def create_app(
                 "last_sync": max((s for s in syncs if s), default=None),
                 "any_source": any(s.is_configured() for s in sources),
                 "has_key": cfg.has_api_key,
+                # Work still running in the background; the page reconnects to it on load.
+                "running": {k: jobs.running(k) for k in ("refresh", "ask", "sync", "gmail")},
                 **ctx,
             },
         )
@@ -95,12 +97,19 @@ def create_app(
         return RedirectResponse("/today")
 
     @app.get("/today", response_class=HTMLResponse)
-    def today(request: Request, window: str = "today", cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):
+    def today(
+        request: Request, window: str | None = None, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)
+    ):
+        # Remember "Since midnight" vs "Last 24h" across tab switches.
+        if window not in ("today", "24h"):
+            window = request.cookies.get("window") if request.cookies.get("window") in ("today", "24h") else "today"
         tz = tasks.local_tz()
         start, _ = tasks.window_for(window, tz)
         rec = store.latest_digest(created_since=start)
         ctx = views.digest_view(store, rec, tz) if rec else {}
-        return page(request, "today.html", cfg, store, window=window, view=ctx, history=False)
+        response = page(request, "today.html", cfg, store, window=window, view=ctx, history=False)
+        response.set_cookie("window", window, max_age=60 * 60 * 24 * 365, samesite="lax")
+        return response
 
     @app.get("/digest/{digest_id}", response_class=HTMLResponse)
     def digest_page(request: Request, digest_id: int, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):
@@ -276,7 +285,11 @@ def create_app(
 
     @app.post("/api/refresh")
     def api_refresh(window: str = Form("today"), cfg: Config = Depends(cfg_dep)):
-        job = jobs.start("refresh", lambda j: tasks.run_refresh(cfg, llm_factory, window, lambda m: j.emit("progress", text=m)))
+        job = jobs.start(
+            "refresh",
+            lambda j: tasks.run_refresh(cfg, llm_factory, window, lambda m: j.emit("progress", text=m)),
+            meta={"window": window},
+        )
         return JSONResponse({"job": job.id})
 
     @app.post("/api/ask")
@@ -284,7 +297,7 @@ def create_app(
         question = question.strip()
         if not question:
             raise HTTPException(400, "Ask something.")
-        job = jobs.start("ask", lambda j: tasks.run_ask(cfg, llm_factory, question[:2000], j))
+        job = jobs.start("ask", lambda j: tasks.run_ask(cfg, llm_factory, question[:2000], j), meta={"question": question[:2000]})
         return JSONResponse({"job": job.id})
 
     @app.post("/api/sync")

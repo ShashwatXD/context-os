@@ -24,7 +24,7 @@
   {% endif %}
 </section>
 
-<div id="progress" class="progress" hidden></div>
+<div id="progress" class="progress" hidden{% if running.refresh and not history %} data-job="{{ running.refresh.id }}" data-kind="refresh" data-window="{{ running.refresh.meta.window }}"{% endif %}></div>
 
 {% if not history and (not any_source or not has_key) %}
 <section class="card setup">
@@ -47,14 +47,14 @@
 
   {% if view.reminders %}
   <section class="section">
-    <h2 class="section-title">⏰ Back from snooze <span class="count">{{ view.reminders|length }}</span></h2>
+    <h2 class="section-title">Back from snooze <span class="count">{{ view.reminders|length }}</span></h2>
     {% for it in view.reminders %}{% include "_item.html" %}{% endfor %}
   </section>
   {% endif %}
 
   {% for s in view.sections %}
   <section class="section section-{{ s.key }}">
-    <h2 class="section-title">{{ s.icon }} {{ s.title }} <span class="count">{{ s.open|length }}</span></h2>
+    <h2 class="section-title">{{ s.title }} <span class="count">{{ s.open|length }}</span></h2>
     {% for it in s.open %}{% include "_item.html" %}{% endfor %}
     {% if not s.open %}<p class="empty">{% if s.key == 'needs_you' %}Nothing needs you right now.{% else %}Nothing here.{% endif %}</p>{% endif %}
     {% if s.snoozed %}
