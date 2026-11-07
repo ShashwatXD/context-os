@@ -7,9 +7,9 @@ from fastapi.testclient import TestClient
 
 from contextos.services import scheduler, tasks
 from contextos.storage import ItemAction
-from contextos.web.app import create_app
-from contextos.web.views import answer_html, item_key, item_state
 from tests.conftest import FakeLLM, msg, tool_call, turn
+from web.app import create_app
+from web.views import answer_html, item_key, item_state
 
 UTC = UTC
 
@@ -86,7 +86,7 @@ def test_done_then_undo_and_votes(client, store):
 
 
 def test_snoozed_items_come_back_from_older_briefings(store):
-    from contextos.web.views import digest_view
+    from web.views import digest_view
 
     did, m1, _ = seed_digest(store)
     item = store.get_digest(did).output["needs_you"][0]

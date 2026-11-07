@@ -141,7 +141,7 @@ def cmd_web(args, cfg, store):
 
     import uvicorn
 
-    from contextos.web.app import create_app
+    from web.app import create_app
 
     url = f"http://localhost:{args.port}"
     console.print(f"[bold]ContextOS[/bold] running at {url}  (Ctrl+C to stop)")

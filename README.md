@@ -50,8 +50,6 @@ flowchart LR
 5. **Verify**: every tag the model cites is checked against the real messages. Anything unsupported is flagged.
 6. **Ask**: for questions, Gemini uses search tools over your messages, step by step, until it can answer.
 
-A deeper walkthrough is in [docs/architecture.md](docs/architecture.md).
-
 ## Tech Stack
 
 - **Language**: Python 3.11+
@@ -64,22 +62,23 @@ A deeper walkthrough is in [docs/architecture.md](docs/architecture.md).
 
 ```
 context-os/
-├── src/contextos/
-│   ├── config.py          # settings from .env and the Settings tab
-│   ├── models.py          # the Message shape every source maps into
-│   ├── llm/               # Gemini client: text, JSON output, tool calling
-│   ├── sources/           # Gmail, Slack and Discord connectors
-│   ├── storage/           # SQLite store and full-text search
-│   ├── pipeline/          # noise filter, context assembly, briefing, ask
-│   ├── services/          # sync, background jobs, scheduler
-│   ├── web/               # FastAPI app, pages, styles
-│   └── cli/               # terminal commands
+├── contextos/              # backend
+│   ├── config.py            # settings from .env and the Settings tab
+│   ├── models.py            # the Message shape every source maps into
+│   ├── llm/                 # Gemini client: text, JSON output, tool calling
+│   ├── sources/             # Gmail, Slack and Discord connectors
+│   ├── storage/             # SQLite store and full-text search
+│   ├── pipeline/            # noise filter, context assembly, briefing, ask
+│   ├── services/            # sync, background jobs, scheduler
+│   └── cli/                 # terminal commands
+├── web/                     # website
+│   ├── app.py               # FastAPI routes
+│   ├── views.py             # turns stored data into what pages show
+│   ├── templates/           # HTML pages
+│   └── static/              # CSS and JavaScript
 ├── tests/
-│   ├── unit/              # pipeline, sources, storage, Gemini wrapper
-│   └── web/               # pages, actions, jobs, security checks
-├── docs/architecture.md
-├── .env.example
-├── Makefile
+│   ├── unit/                # pipeline, sources, storage, Gemini wrapper
+│   └── web/                 # pages, actions, jobs, security checks
 └── pyproject.toml
 ```
 
@@ -101,28 +100,25 @@ cd context-os
 ### 2. Install Dependencies
 
 ```bash
-make install
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
-
-This creates a `.venv` folder and installs ContextOS into it.
 
 ### 3. Set Up Environment Variables
 
-1. Copy the example file:
-   ```bash
-   cp .env.example .env
-   ```
-2. Open `.env` and add your Gemini key:
-   ```env
-   GEMINI_API_KEY="your_gemini_api_key_here"
-   ```
+Create a file named `.env` in the project folder with your Gemini key:
+
+```env
+GEMINI_API_KEY="your_gemini_api_key_here"
+```
 
 The Gemini key is only ever read from `.env`. It is never entered or shown in the app.
 
 ### 4. Run the App
 
 ```bash
-make dev
+contextos web
 ```
 
 Your browser opens [http://localhost:8000](http://localhost:8000).
@@ -175,9 +171,9 @@ Discord does not allow apps to read personal DMs, so only servers are included.
 ## Development
 
 ```bash
-make test      # run all tests (offline, no keys needed)
-make lint      # check code style
-make format    # auto-format code
+pytest                  # run all tests (offline, no keys needed)
+ruff check .            # check code style
+ruff format .           # auto-format code
 ```
 
 The same features are also available in the terminal: `contextos today`, `contextos ask "..."`, `contextos status`.
@@ -190,4 +186,4 @@ The same features are also available in the terminal: `contextos today`, `contex
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `make test` and `make lint` before opening a pull request.
+Issues and pull requests are welcome. Please run `pytest` and `ruff check .` before opening a pull request.

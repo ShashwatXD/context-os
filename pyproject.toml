@@ -29,10 +29,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["contextos*", "web*"]
 
 [tool.setuptools.package-data]
-contextos = ["web/templates/*.html", "web/static/*"]
+web = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -40,7 +40,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 135
 target-version = "py311"
-src = ["src", "tests"]
+src = [".", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

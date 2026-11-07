@@ -21,7 +21,7 @@ from contextos.services.jobs import Jobs
 from contextos.services.scheduler import Scheduler
 from contextos.sources import all_sources
 from contextos.storage import Store
-from contextos.web import views
+from web import views
 
 HERE = Path(__file__).parent
 
