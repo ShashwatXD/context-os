@@ -23,6 +23,7 @@ It is built around one rule: **every claim must point to a real message.** The m
 | **Source Links** | Every item links to the original email or message, so you can check it in one click. |
 | **Ask Anything** | Ask "what did Priya say about the contract?" and get an answer with links. |
 | **Smart Search** | Finds messages by meaning, not just words ("payment" finds "invoice bounced"), fixes typos in names ("priyta" finds Priya), and understands "last week" or "in October". |
+| **MCP Server** | Lets any AI agent (Claude Desktop, Claude Code, Cursor) search your messages and read your briefing through read-only tools. |
 | **Done and Snooze** | Mark items as handled or push them to tomorrow. A topic comes back if there's news. |
 | **Noise Filter** | Promotions, muted channels and bot chatter are removed before the model sees them. |
 | **Runs on Its Own** | Syncs every 15 minutes and writes a fresh briefing each morning. |
@@ -69,6 +70,7 @@ graph TD
 - **AI**: Google Gemini (`gemini-3.8-flash` for briefings and questions, `gemini-3.1-flash-lite` for bulk summaries, `gemini-embedding-001` for meaning search)
 - **Storage**: SQLite with full-text search, plus vector embeddings stored in the same file (no separate vector database)
 - **Sources**: Gmail API, Slack Web API, Discord API
+- **Agent protocol**: Model Context Protocol (MCP) over stdio
 
 ## Project Structure
 
@@ -82,6 +84,8 @@ context-os/
 │   ├── storage/             # SQLite store and full-text search
 │   ├── pipeline/            # noise filter, context assembly, briefing, ask
 │   ├── services/            # sync, background jobs, scheduler
+│   ├── bench/               # labeled benchmark and scoring (`contextos bench`)
+│   ├── mcp_server.py        # MCP server for AI agents (`contextos mcp`)
 │   └── cli/                 # terminal commands
 ├── web/                     # website
 │   ├── app.py               # FastAPI routes
@@ -89,7 +93,7 @@ context-os/
 │   ├── templates/           # HTML pages
 │   └── static/              # CSS and JavaScript
 ├── tests/
-│   ├── unit/                # pipeline, sources, storage, Gemini wrapper
+│   ├── unit/                # pipeline, search, sources, storage, Gemini wrapper, MCP
 │   └── web/                 # pages, actions, jobs, security checks
 └── pyproject.toml
 ```
@@ -180,12 +184,55 @@ Discord does not allow apps to read personal DMs, so only servers are included.
 4. Use **Ask** for anything the briefing doesn't cover.
 5. Rate items with 👍 / 👎 to build up a record of what the briefing gets right.
 
+## Use It From Other AI Agents (MCP)
+
+ContextOS can run as an **MCP server**. MCP (Model Context Protocol) is a standard way for AI agents to use outside tools. Once connected, an agent like Claude can answer "what did Priya say about the contract?" or "what needs my attention today?" using your synced messages, with no Gmail, Slack or Discord setup of its own.
+
+### Available Tools
+
+| Tool | What it does |
+|---|---|
+| `search_messages` | Searches by meaning and keywords, with optional filters for person, dates, source and channel. Handles typos. |
+| `get_thread` | Returns the full conversation a message belongs to. |
+| `recent_activity` | Lists which inboxes and channels were active recently, with message counts. |
+| `latest_briefing` | Returns today's briefing (needs you, important, FYI) with source links. |
+
+All tools are **read-only**. Results include links to the original messages, and message text is marked as untrusted so the agent treats it as data, not instructions.
+
+### 1. Claude Code
+
+```bash
+claude mcp add contextos -- /path/to/context-os/.venv/bin/contextos mcp
+```
+
+### 2. Claude Desktop
+
+Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "contextos": {
+      "command": "/path/to/context-os/.venv/bin/contextos",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### 3. Cursor
+
+Add the same `mcpServers` block to `~/.cursor/mcp.json`.
+
+Replace `/path/to/context-os` with where you cloned the project. ContextOS keeps syncing in the background as long as `contextos web` is running; the MCP server reads from the same local database.
+
 ## Development
 
 ```bash
 pytest                  # run all tests (offline, no keys needed)
 ruff check .            # check code style
 ruff format .           # auto-format code
+contextos bench         # measure quality on a 200-message labeled benchmark
 ```
 
 The same features are also available in the terminal: `contextos today`, `contextos ask "..."`, `contextos status`.
