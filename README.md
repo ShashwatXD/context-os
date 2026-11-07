@@ -29,18 +29,27 @@ It is built around one rule: **every claim must point to a real message.** The m
 ## How It Works
 
 ```mermaid
-flowchart LR
-    A[Gmail] --> D[Sync every 15 min]
-    B[Slack] --> D
-    C[Discord] --> D
-    D --> E[(Local database)]
-    E --> F[Filter noise]
-    F --> G[Group into conversations]
-    G --> H[Gemini writes briefing]
-    H --> I[Check every citation]
-    I --> J[Today page]
-    E --> K[Ask: Gemini searches with tools]
-    K --> L[Answer with links]
+graph TD
+    A[Start: Messages in Gmail, Slack and Discord] --> B[1. Sync new messages every 15 minutes];
+    B --> C[2. Save them in the local database];
+    C --> D{What do you need?};
+
+    D -- Briefing --> E1[3a. Pick today's messages];
+    E1 --> F1[4a. Remove promotions, bots and muted channels];
+    F1 --> G1[5a. Group by channel and thread, tag each message];
+    G1 --> H1{Busy day?};
+    H1 -- Yes --> J1[A lighter model summarizes in parts first];
+    J1 --> I1;
+    H1 -- No --> I1[6a. Gemini writes the briefing];
+    I1 --> K1[7a. Check every citation against real messages];
+    K1 --> L1[End: Briefing on the Today page];
+
+    D -- Question --> E2[3b. Gemini chooses a search tool];
+    E2 --> F2[4b. Search messages or read a thread];
+    F2 --> G2{Enough info?};
+    G2 -- No --> E2;
+    G2 -- Yes --> H2[5b. Write the answer with source links];
+    H2 --> L2[End: Answer on the Ask page];
 ```
 
 1. **Sync**: new messages are fetched from each connected source and saved locally.
