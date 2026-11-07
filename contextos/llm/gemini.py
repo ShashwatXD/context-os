@@ -70,6 +70,34 @@ class LLM:
         except json.JSONDecodeError as e:
             raise LLMError(f"Gemini returned invalid JSON: {e}") from e
 
+    # ---- embeddings (meaning search) ----------------------------------------
+
+    def embed(self, texts: list[str], *, model: str, task: str, dim: int = 768, batch: int = 100) -> list[list[float]]:
+        """Turn texts into meaning vectors.
+
+        task = "RETRIEVAL_DOCUMENT" for stored messages, "RETRIEVAL_QUERY" for a search question: the model
+        tunes each side of the search differently. dim < 3072 truncates the vector (the model is trained so
+        shorter prefixes keep most of the quality), trading a little accuracy for 4x less storage and compute.
+        """
+        vectors: list[list[float]] = []
+        for i in range(0, len(texts), batch):
+            chunk = texts[i : i + batch]
+            try:
+                resp = self.client.models.embed_content(
+                    model=model,
+                    contents=chunk,
+                    config=types.EmbedContentConfig(task_type=task, output_dimensionality=dim),
+                )
+            except errors.APIError as e:
+                raise LLMError(_describe(e, model)) from e
+            vectors += [list(e.values or []) for e in resp.embeddings or []]
+            bucket = self.usage[model]
+            bucket["input"] += sum(len(t) for t in chunk) // 4  # estimate; the embed API doesn't report tokens
+            bucket["calls"] += 1
+        if len(vectors) != len(texts):
+            raise LLMError("Gemini returned the wrong number of embeddings.")
+        return vectors
+
     # ---- tool calling (used by Ask) -----------------------------------------
 
     @staticmethod

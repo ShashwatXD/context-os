@@ -81,3 +81,23 @@ def test_api_errors_become_friendly(code, needle):
     llm, _ = make(errors.ClientError(code, body))
     with pytest.raises(LLMError, match=needle):
         llm.text(model="m", system="s", prompt="p")
+
+
+def test_embed_batches_and_uses_task_type():
+    def emb(n):
+        return types.EmbedContentResponse(embeddings=[types.ContentEmbedding(values=[0.1, 0.2]) for _ in range(n)])
+
+    class EmbedModels:
+        def __init__(self):
+            self.requests = []
+
+        def embed_content(self, *, model, contents, config):
+            self.requests.append({"model": model, "n": len(contents), "config": config})
+            return emb(len(contents))
+
+    models = EmbedModels()
+    llm = LLM(client=SimpleNamespace(models=models))
+    out = llm.embed(["a"] * 150, model="gemini-embedding-001", task="RETRIEVAL_DOCUMENT", dim=768)
+    assert len(out) == 150 and [r["n"] for r in models.requests] == [100, 50]
+    cfg = models.requests[0]["config"]
+    assert cfg.task_type == "RETRIEVAL_DOCUMENT" and cfg.output_dimensionality == 768

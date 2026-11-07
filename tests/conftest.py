@@ -66,6 +66,10 @@ class FakeLLM:
         self.calls.append({"kind": "tool_turn", **kw, "history": list(kw["history"])})
         return self.turns.pop(0)
 
+    def embed(self, texts, **kw):
+        self.calls.append({"kind": "embed", "n": len(texts), **kw})
+        return [fake_vector(t) for t in texts]
+
     def usage_summary(self):
         return {"total_tokens": 1234}
 
@@ -83,3 +87,19 @@ def turn(text="", *calls):
     from contextos.llm import ToolTurn
 
     return ToolTurn(text=text, calls=list(calls), message={"role": "model", "text": text})
+
+
+# Words that should count as "the same meaning" in tests, standing in for a real embedding model.
+SYNONYMS = {"invoice": "payment", "billing": "payment", "paise": "payment", "frustrated": "upset"}
+
+
+def fake_vector(text, dim=256):
+    """Deterministic bag-of-words vector: texts sharing (synonym-mapped) words point the same way."""
+    import hashlib
+    import re
+
+    v = [0.0] * dim
+    for w in re.findall(r"\w+", text.lower()):
+        w = SYNONYMS.get(w, w)
+        v[int(hashlib.md5(w.encode()).hexdigest(), 16) % dim] += 1.0
+    return v

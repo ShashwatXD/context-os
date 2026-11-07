@@ -7,6 +7,8 @@ ContextOS reads your Gmail, Slack and Discord and writes a short briefing of wha
 [![Google Gemini](https://img.shields.io/badge/Google%20Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 
+![The Today page: a briefing grouped into Needs you, Important and FYI, each item linked to its source messages](assets/today.png)
+
 ## Overview
 
 Your messages are spread across too many places. ContextOS brings them into one local database, removes the noise, and asks **Gemini** to tell you what actually matters today.
@@ -20,6 +22,7 @@ It is built around one rule: **every claim must point to a real message.** The m
 | **Daily Briefing** | A morning summary in three sections: *Needs you*, *Important* and *FYI*. |
 | **Source Links** | Every item links to the original email or message, so you can check it in one click. |
 | **Ask Anything** | Ask "what did Priya say about the contract?" and get an answer with links. |
+| **Smart Search** | Finds messages by meaning, not just words ("payment" finds "invoice bounced"), fixes typos in names ("priyta" finds Priya), and understands "last week" or "in October". |
 | **Done and Snooze** | Mark items as handled or push them to tomorrow. A topic comes back if there's news. |
 | **Noise Filter** | Promotions, muted channels and bot chatter are removed before the model sees them. |
 | **Runs on Its Own** | Syncs every 15 minutes and writes a fresh briefing each morning. |
@@ -57,14 +60,14 @@ graph TD
 3. **Assemble**: messages are grouped by channel and thread, and each one gets a short tag like `m42`.
 4. **Write**: Gemini turns this into a structured briefing. On very busy days, a lighter model summarizes in parts first.
 5. **Verify**: every tag the model cites is checked against the real messages. Anything unsupported is flagged.
-6. **Ask**: for questions, Gemini uses search tools over your messages, step by step, until it can answer.
+6. **Ask**: for questions, Gemini uses search tools over your messages, step by step, until it can answer. Search combines keyword matching with meaning-based (vector) search, and supports filters for person, date and channel.
 
 ## Tech Stack
 
 - **Language**: Python 3.11+
 - **Web**: FastAPI, Jinja templates, plain JavaScript (no build step)
-- **AI**: Google Gemini (`gemini-3.8-flash` for briefings and questions, `gemini-3.1-flash-lite` for bulk summaries)
-- **Storage**: SQLite with full-text search
+- **AI**: Google Gemini (`gemini-3.8-flash` for briefings and questions, `gemini-3.1-flash-lite` for bulk summaries, `gemini-embedding-001` for meaning search)
+- **Storage**: SQLite with full-text search, plus vector embeddings stored in the same file (no separate vector database)
 - **Sources**: Gmail API, Slack Web API, Discord API
 
 ## Project Structure

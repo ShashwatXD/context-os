@@ -34,6 +34,15 @@ CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     rid UNINDEXED, title, text, author, channel, tokenize = 'porter unicode61'
 );
+-- Every distinct word in the index: used to correct typos ("contarct" -> "contract").
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_vocab USING fts5vocab(messages_fts, 'row');
+
+-- Meaning vectors (one per message), stored as float32 bytes. No separate vector database needed.
+CREATE TABLE IF NOT EXISTS embeddings (
+    rid   INTEGER PRIMARY KEY,
+    model TEXT NOT NULL,
+    vec   BLOB NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS sync_state (
     source         TEXT PRIMARY KEY,
@@ -151,7 +160,7 @@ class Store:
         new = 0
         with self.db:
             for m in messages:
-                row = self.db.execute("SELECT rid FROM messages WHERE id = ?", (m.id,)).fetchone()
+                row = self.db.execute("SELECT rid, text, title FROM messages WHERE id = ?", (m.id,)).fetchone()
                 values = (
                     m.id,
                     m.source,
@@ -173,6 +182,8 @@ class Store:
                     new += 1
                 else:
                     m.rid = row["rid"]
+                    if (row["text"], row["title"]) != (m.text, m.title):
+                        self.db.execute("DELETE FROM embeddings WHERE rid = ?", (m.rid,))  # re-embed edited text
                     self.db.execute(
                         f"UPDATE messages SET ({_COLUMNS}) = ({','.join('?' * 13)}) WHERE rid = ?",
                         (*values, m.rid),
@@ -194,21 +205,113 @@ class Store:
     def count_since(self, since: datetime) -> int:
         return self.db.execute("SELECT COUNT(*) FROM messages WHERE ts >= ?", (since.timestamp(),)).fetchone()[0]
 
-    def search(self, query: str, since: datetime | None = None, source: str | None = None, limit: int = 25) -> list[Message]:
+    @staticmethod
+    def _where(
+        authors: list[str] | None = None,
+        after: datetime | None = None,
+        before: datetime | None = None,
+        source: str | None = None,
+        channel: str | None = None,
+    ) -> tuple[str, list]:
+        """SQL filter clauses shared by keyword search, listing and vector search."""
+        clauses, params = [], []
+        if authors:
+            marks = ",".join("?" * len(authors))
+            # A person's messages, plus your side of your DMs with them.
+            clauses.append(f"(m.author IN ({marks}) OR m.channel IN ({marks}))")
+            params += list(authors) + [f"DM: {a}" for a in authors]
+        if after:
+            clauses.append("m.ts >= ?")
+            params.append(after.timestamp())
+        if before:
+            clauses.append("m.ts < ?")
+            params.append(before.timestamp())
+        if source:
+            clauses.append("m.source = ?")
+            params.append(source)
+        if channel:
+            clauses.append("LOWER(m.channel) LIKE ?")
+            params.append(f"%{channel.lower().lstrip('#')}%")
+        return "".join(f" AND {c}" for c in clauses), params
+
+    def search(
+        self,
+        query: str,
+        since: datetime | None = None,
+        source: str | None = None,
+        limit: int = 25,
+        *,
+        authors: list[str] | None = None,
+        before: datetime | None = None,
+        channel: str | None = None,
+    ) -> list[Message]:
+        """Keyword search (FTS5, bm25-ranked) with optional filters."""
         q = fts_query(query)
         if not q:
             return []
-        sql = "SELECT m.* FROM messages_fts f JOIN messages m ON m.rid = f.rid WHERE messages_fts MATCH ?"
-        params: list = [q]
-        if since:
-            sql += " AND m.ts >= ?"
-            params.append(since.timestamp())
-        if source:
-            sql += " AND m.source = ?"
-            params.append(source)
-        sql += " ORDER BY bm25(messages_fts) LIMIT ?"
-        params.append(limit)
-        return [self._to_message(r) for r in self.db.execute(sql, params).fetchall()]
+        where, params = self._where(authors, since, before, source, channel)
+        sql = (
+            "SELECT m.* FROM messages_fts f JOIN messages m ON m.rid = f.rid "
+            f"WHERE messages_fts MATCH ?{where} ORDER BY bm25(messages_fts) LIMIT ?"
+        )
+        return [self._to_message(r) for r in self.db.execute(sql, [q, *params, limit]).fetchall()]
+
+    def filtered(self, *, limit: int = 50, **filters) -> list[Message]:
+        """Newest messages matching filters only (no text query): 'what did Priya send last week?'."""
+        where, params = self._where(**filters)
+        sql = f"SELECT m.* FROM messages m WHERE 1=1{where} ORDER BY m.ts DESC LIMIT ?"
+        return [self._to_message(r) for r in self.db.execute(sql, [*params, limit]).fetchall()]
+
+    def people(self) -> dict[str, int]:
+        """Everyone who appears as an author or DM partner, with message counts."""
+        out: dict[str, int] = {}
+        for r in self.db.execute("SELECT author, COUNT(*) FROM messages WHERE author != 'me' GROUP BY author"):
+            out[r[0]] = out.get(r[0], 0) + r[1]
+        for r in self.db.execute("SELECT substr(channel, 5), COUNT(*) FROM messages WHERE channel LIKE 'DM: %' GROUP BY channel"):
+            out[r[0]] = out.get(r[0], 0) + r[1]
+        return out
+
+    def term_hits(self, word: str) -> int:
+        """How many messages contain this word (after stemming)."""
+        q = fts_query(word)
+        return self.db.execute("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?", (q,)).fetchone()[0] if q else 0
+
+    def vocabulary(self, min_docs: int = 1) -> list[str]:
+        return [r[0] for r in self.db.execute("SELECT term FROM messages_vocab WHERE doc >= ?", (min_docs,))]
+
+    # ---- meaning vectors ----------------------------------------------------
+
+    def missing_embeddings(self, model: str, limit: int = 100) -> list[Message]:
+        rows = self.db.execute(
+            "SELECT m.* FROM messages m LEFT JOIN embeddings e ON e.rid = m.rid AND e.model = ? "
+            "WHERE e.rid IS NULL ORDER BY m.ts DESC LIMIT ?",
+            (model, limit),
+        ).fetchall()
+        return [self._to_message(r) for r in rows]
+
+    def save_embeddings(self, model: str, items: list[tuple[int, bytes]]) -> None:
+        with self.db:
+            self.db.executemany(
+                "INSERT OR REPLACE INTO embeddings (rid, model, vec) VALUES (?, ?, ?)",
+                [(rid, model, vec) for rid, vec in items],
+            )
+
+    def embedding_count(self, model: str) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM embeddings WHERE model = ?", (model,)).fetchone()[0]
+
+    def vectors(self, model: str, **filters) -> list[tuple[int, bytes]]:
+        """(rid, vector bytes) for every embedded message matching the filters."""
+        where, params = self._where(**filters)
+        sql = f"SELECT e.rid, e.vec FROM embeddings e JOIN messages m ON m.rid = e.rid WHERE e.model = ?{where}"
+        return [(r[0], r[1]) for r in self.db.execute(sql, [model, *params])]
+
+    def by_rids(self, rids: list[int]) -> dict[int, Message]:
+        out: dict[int, Message] = {}
+        for i in range(0, len(rids), 500):
+            chunk = rids[i : i + 500]
+            rows = self.db.execute(f"SELECT * FROM messages WHERE rid IN ({','.join('?' * len(chunk))})", chunk)
+            out.update({r["rid"]: self._to_message(r) for r in rows})
+        return out
 
     def by_rid(self, rid: int) -> Message | None:
         row = self.db.execute("SELECT * FROM messages WHERE rid = ?", (rid,)).fetchone()

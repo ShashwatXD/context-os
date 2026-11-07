@@ -45,12 +45,25 @@ def friendly_error(e: Exception) -> str:
     return f"{type(e).__name__}: {e}"
 
 
-def run_sync(cfg: Config, progress: Callable[[str], None], cover_from: datetime | None = None) -> list:
+def run_sync(
+    cfg: Config,
+    progress: Callable[[str], None],
+    cover_from: datetime | None = None,
+    llm_factory: LLMFactory | None = default_llm,
+) -> list:
+    """Fetch new messages, then embed them for meaning search (if a Gemini key is configured)."""
+    from contextos.services.indexing import index_messages
     from contextos.services.sync import sync
 
     store = Store(cfg.db_path)
     try:
-        return sync(store, cfg, cover_from=cover_from, progress=progress)
+        reports = sync(store, cfg, cover_from=cover_from, progress=progress)
+        if llm_factory and cfg.has_api_key:
+            try:
+                index_messages(store, llm_factory(cfg), cfg, progress)
+            except LLMError as e:  # keyword search still works; try again next sync
+                progress(f"Meaning index skipped: {e}")
+        return reports
     finally:
         store.close()
 
@@ -64,7 +77,7 @@ def run_refresh(cfg: Config, llm_factory: LLMFactory, kind: str, progress: Calla
         progress("Waiting for the background sync to finish…")
         RUN_LOCK.acquire()
     try:
-        run_sync(cfg, progress, cover_from=start)
+        run_sync(cfg, progress, cover_from=start, llm_factory=llm_factory)
         store = Store(cfg.db_path)
         try:
             llm = llm_factory(cfg)
@@ -86,7 +99,7 @@ def run_ask(cfg: Config, llm_factory: LLMFactory, question: str, job: Job) -> di
         llm = llm_factory(cfg)
 
         def on_step(name: str, inp: dict) -> None:
-            detail = inp.get("query") or inp.get("ref") or ""
+            detail = " · ".join(str(inp[k]) for k in ("query", "person", "after", "before", "channel", "ref") if inp.get(k))
             label = {
                 "search_messages": "Searching",
                 "get_thread": "Reading thread",

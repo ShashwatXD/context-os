@@ -39,6 +39,8 @@ class Config:
     # Models: main = final briefing + ask; worker = bulk notes on busy days.
     main_model: str = "gemini-3.8-flash"
     worker_model: str = "gemini-3.1-flash-lite"
+    embed_model: str = "gemini-embedding-001"
+    embed_dim: int = 768
     # Context budget (estimated input tokens). Above this, summarize in chunks first.
     token_budget: int = 50_000
     chunk_tokens: int = 25_000
@@ -87,6 +89,8 @@ def load_config() -> Config:
         about_me=env("CONTEXTOS_ABOUT_ME", ""),
         main_model=env("CONTEXTOS_MAIN_MODEL", "gemini-3.8-flash"),
         worker_model=env("CONTEXTOS_WORKER_MODEL", "gemini-3.1-flash-lite"),
+        embed_model=env("CONTEXTOS_EMBED_MODEL", "gemini-embedding-001"),
+        embed_dim=int(env("CONTEXTOS_EMBED_DIM", "768")),
         token_budget=int(env("CONTEXTOS_TOKEN_BUDGET", "50000")),
         chunk_tokens=int(env("CONTEXTOS_CHUNK_TOKENS", "25000")),
         backfill_days=int(env("CONTEXTOS_BACKFILL_DAYS", "2")),

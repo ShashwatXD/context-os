@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
@@ -47,6 +48,10 @@ def create_app(
     app = FastAPI(title="ContextOS", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
+    # Version static files by content, so browsers fetch new CSS/JS after an update instead of a stale cache.
+    templates.env.globals["asset_v"] = hashlib.sha1(
+        b"".join(f.read_bytes() for f in sorted((HERE / "static").iterdir()) if f.is_file())
+    ).hexdigest()[:10]
     templates.env.filters["ago"] = views.ago
     templates.env.filters["local"] = lambda dt, fmt="%H:%M": dt.astimezone(tasks.local_tz()).strftime(fmt) if dt else ""
 
@@ -304,7 +309,7 @@ def create_app(
     def api_sync(cfg: Config = Depends(cfg_dep)):
         def work(j):
             with tasks.RUN_LOCK:
-                reports = tasks.run_sync(cfg, lambda m: j.emit("progress", text=m))
+                reports = tasks.run_sync(cfg, lambda m: j.emit("progress", text=m), llm_factory=llm_factory)
             return {"new": sum(r.new for r in reports)}
 
         job = jobs.start("sync", work)

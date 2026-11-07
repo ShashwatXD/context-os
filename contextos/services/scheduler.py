@@ -68,7 +68,7 @@ class Scheduler(threading.Thread):
             self.last_sync_attempt = now
             if tasks.RUN_LOCK.acquire(blocking=False):
                 try:
-                    tasks.run_sync(cfg, lambda m: log.info("sync: %s", m))
+                    tasks.run_sync(cfg, lambda m: log.info("sync: %s", m), llm_factory=self.llm_factory)
                 finally:
                     tasks.RUN_LOCK.release()
                 return "sync"
