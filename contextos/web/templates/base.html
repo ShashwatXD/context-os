@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ContextOS{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%234f46e5'/><circle cx='16' cy='16' r='6' fill='none' stroke='white' stroke-width='3'/></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/today"><span class="brand-mark"></span>ContextOS</a>
+      <nav>
+        <a href="/today" class="{{ 'active' if nav == 'today' }}">Today</a>
+        <a href="/ask" class="{{ 'active' if nav == 'ask' }}">Ask</a>
+        <a href="/history" class="{{ 'active' if nav == 'history' }}">History</a>
+        <a href="/sources" class="{{ 'active' if nav == 'sources' }}">Sources</a>
+        <a href="/settings" class="{{ 'active' if nav == 'settings' }}">Settings</a>
+      </nav>
+      <span class="sync-pill" title="Last sync">
+        <span class="dot {{ 'ok' if last_sync else 'off' }}"></span>
+        {% if last_sync %}synced {{ last_sync | ago }}{% else %}not synced{% endif %}
+      </span>
+    </div>
+  </header>
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

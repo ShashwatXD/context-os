@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Ask · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Search everything ContextOS has synced</p>
+    <h1>Ask</h1>
+  </div>
+</section>
+
+<form class="ask-form" id="ask-form">
+  <input name="question" id="question" placeholder="What did Priya say about the contract?" autocomplete="off"
+         {% if not has_key or not has_messages %}disabled{% endif %} autofocus>
+  <button class="btn primary" type="submit" {% if not has_key or not has_messages %}disabled{% endif %}>Ask</button>
+</form>
+{% if not has_key %}<p class="muted">Add your Anthropic API key in <a href="/settings">Settings</a> first.</p>
+{% elif not has_messages %}<p class="muted">No messages yet. Connect a source and sync on <a href="/sources">Sources</a>.</p>{% endif %}
+
+<div class="suggestions">
+  {% for q in ["What needs my reply?", "What happened in Slack today?", "Any deadlines this week?", "Where is the latest on the launch?"] %}
+  <button class="chip" type="button" data-suggest="{{ q }}">{{ q }}</button>
+  {% endfor %}
+</div>
+
+<div id="ask-progress" class="progress" hidden></div>
+<div id="answers">
+  {% for a in asks %}{% include "_answer.html" %}{% endfor %}
+</div>
+{% endblock %}

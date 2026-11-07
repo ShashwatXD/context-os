@@ -1,142 +1,128 @@
-# ContextOS — Enterprise Context Infrastructure Platform for AI Agents
+# ContextOS
 
-> **ContextOS** connects information from disparate enterprise systems (PostgreSQL data warehouses, Snowflake DDL, dbt transformation pipelines, Notion governance portals, GitHub repositories, and Slack discussions), discovers entities and relationships, builds a structured and cryptographically traceable context graph, enriches semantic metadata, and exposes trusted context to external AI agents through REST APIs and the **Model Context Protocol (MCP)**.
+A small website that reads your Gmail, Slack and Discord and tells you what happened today.
 
----
+It runs on your own computer. Open it in the morning and you get a short briefing:
 
-## 1. Repository Architecture
+- **Needs you**: things you should reply to or act on
+- **Important**: things you'd be upset to miss
+- **FYI**: everything else worth a line
 
-ContextOS is partitioned into two completely independent, decoupled repositories:
-
-```
-context-os/
-│
-├── contextos-api/           # Repository 1: Complete Backend, Context Engine & MCP Server
-│   ├── app/
-│   │   ├── domain/          # Pure Domain models (zero framework dependencies)
-│   │   ├── application/     # Ingestion, Entity Resolution, Retrieval, Approvals, Eval
-│   │   ├── infrastructure/  # SQLAlchemy 2.0, Connectors, Embeddings, LLM, MCP, Tracer
-│   │   └── interfaces/      # FastAPI REST routes and CLI commands
-│   ├── tests/               # 34 unit & integration tests (100% pass rate)
-│   ├── demo/                # Synthetic enterprise dataset (Acme Analytics)
-│   ├── Dockerfile           # Python 3.12 multi-stage build container
-│   ├── docker-compose.yml   # PostgreSQL 16 + pgvector environment
-│   └── README.md            # Exhaustive 20-section architecture & setup guide
-│
-└── contextos-web/           # Repository 2: Frontend Engineering Console
-    ├── src/
-    │   ├── app/             # Next.js 14 App Router (10 primary navigation views)
-    │   ├── components/      # Atlan-inspired minimalist design system
-    │   └── lib/             # Typed API client & domain models
-    ├── package.json         # React 18, Next 14, Lucide React, Tailwind CSS
-    └── README.md            # 20-section UI architecture & screen documentation
-```
+Every item links back to the original message, so you can check it yourself.
 
 ---
 
-## 2. High-Level System Architecture
-
-```mermaid
-flowchart LR
-    Sources["Enterprise Sources\n(PostgreSQL, dbt, Notion, GitHub, Slack)"]
-    Engine["ContextOS Engine\n(Entity Resolution · Graph · Provenance)"]
-    MCP["Governed MCP Gateway\n(Role ACLs · Approval Gates)"]
-    Agents["AI Agents\n(Claude Desktop, Autonomous Agents)"]
-
-    Sources -->|"Background Sync / Webhooks"| Engine
-    Engine -->|"Traceable Hybrid Context"| MCP
-    MCP -->|"Grounded Tools & Evidence"| Agents
-    Agents -.->|"Mutative Actions (HITL Gate)"| MCP
-```
-
----
-
-## 3. Core Engineering Capabilities
-
-1. **Three Data Access Mechanisms**:
-   - **Mechanism A (Background Synchronization)**: Incremental sync using cursors, checkpoints, idempotency keys, and exponential backoff retry with automatic quarantining to a **Dead-Letter Queue (DLQ)**.
-   - **Mechanism B (On-Demand Context Retrieval)**: The primary agent query path via standard Model Context Protocol (MCP) tools and REST APIs.
-   - **Mechanism C (Live Source Fallback)**: Automatically triggers a live provider API fetch when local context exceeds the freshness SLA threshold ($900\text{s}$) or is missing from the local index.
-2. **Official Enterprise Connectors**:
-   - **PostgreSQL**: Table DDL, column schemas, and primary key extraction.
-   - **dbt**: Parses `manifest.json` for model transformations, descriptions, and upstream lineage.
-   - **Notion**: Ingests KPI definitions, metrics, and business policies.
-   - **GitHub**: Pull requests, commits, and AST Python function/class symbol parsing.
-   - **Slack**: Channel discussions with content-aware thread chunking and permalinks.
-3. **Multi-Stage Entity Resolution**: Normalizes prefixes, matches canonical names, computes token set containment and Levenshtein edit distance, auto-linking matches with confidence $\ge 0.85$ while routing borderline matches ($0.70 - 0.84$) to the Human Review Queue.
-4. **4-Way Storage Segregation**: Separates raw provider events, the graph knowledge layer, dense vector embeddings with role-based ACLs, and agent telemetry.
-5. **Traceable Hybrid Retrieval**: Combines full-text search with dense vector similarity, fused via **Reciprocal Rank Fusion (RRF)** ($k=60$) and traversed via multi-hop BFS graph lineage.
-6. **Governed Agent Runtime & MCP Protocol**: Exposes 7 semantic MCP tools with permission policies and human-in-the-loop approval barriers (`PENDING_REVIEW` $\to$ `APPROVED`).
-7. **Empirical Evaluation Benchmark**: Reproducible golden benchmark measuring Recall@K ($0.900$), entity resolution accuracy ($0.950$), context relevance ($0.880$), and policy compliance ($100\%$).
-
----
-
-## 4. Quickstart & Local Execution
-
-### 1. Backend (`contextos-api`)
+## Start
 
 ```bash
-cd contextos-api
-
-# Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt greenlet aiosqlite
-
-# Run the automated test suite (34 passing tests)
-pytest tests -v
-
-# Seed the Acme Analytics synthetic enterprise dataset
-python -m app.cli demo seed
-
-# Execute the end-to-end Revenue Discrepancy scenario
-python -m app.cli demo run
-
-# Start the FastAPI REST and MCP server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+pip install -e .
+contextos web
 ```
-API Documentation: `http://localhost:8000/docs`
 
-### 2. Frontend (`contextos-web`)
+Your browser opens at **http://localhost:8000**. Go to **Sources** and:
 
-```bash
-cd contextos-web
+1. Paste your Anthropic API key (get one at [platform.claude.com](https://platform.claude.com)).
+2. Connect at least one source (steps below).
+3. Go back to **Today** and press **Write my briefing**.
 
-# Install dependencies
-npm install
-
-# Build static production bundle (verifies type safety)
-npm run build
-
-# Start the Next.js development server
-npm run dev
-```
-Console UI: `http://localhost:3000`
+After that, ContextOS syncs every 15 minutes and writes a new briefing each morning. You only need to open the page.
 
 ---
 
-## 5. Primary End-to-End Demonstration Scenario
+## Pages
 
-The system models **Acme Analytics**, a high-growth SaaS business investigating an executive metric discrepancy:
-
-> *"Why does our monthly revenue dashboard show a different number from the finance report?"*
-
-```bash
-$ python -m app.cli demo run
-```
-
-1. **Grounded Entity Discovery**: Locates the certified Finance policy (`Monthly Recurring Revenue (MRR)`), the engineering fix in GitHub (`PR #142`), and the contradictory Sales commission document (`Monthly Billed Revenue`).
-2. **Multi-Hop Lineage Traversal**: Traces the dependency flow from raw `stripe_charges` through dbt transformation models to downstream BI dashboards.
-3. **Definition Conflict Detection**: Detects that Sales Operations evaluates gross billed invoices, whereas certified Finance policy strictly deducts chargebacks and refund churn (`DISPUTED_DEFINITION` detected with $0.91$ confidence).
-4. **Governed Agent Action**: Agent proposes metric redefinition (`request_metric_correction`). ContextOS intercepts the action and places the execution into `WAITING_APPROVAL`.
-5. **Human Approval Decision**: Human steward reviews the evidence and approves the certification in the Web Console (`/governance`).
+| Page | What it's for |
+|---|---|
+| **Today** | Your briefing. Mark things **Done**, push them to **Tomorrow**, or rate them 👍 / 👎. |
+| **Ask** | Ask a question like "what did Priya say about the contract?" and get an answer with links. |
+| **History** | Every past briefing. |
+| **Sources** | Connect accounts, add keys, set your name and what matters to you. |
 
 ---
 
-## 6. Detailed Repository Documentation
+## Connecting sources
 
-For in-depth architectural specifications, entity relationship diagrams, and implementation details:
-- **[Backend Architecture & Guide (`contextos-api/README.md`)](file:///Users/shashwat/Desktop/context-os/contextos-api/README.md)** (20 sections, 9 Mermaid diagrams)
-- **[Frontend Architecture & Screens (`contextos-web/README.md`)](file:///Users/shashwat/Desktop/context-os/contextos-web/README.md)** (20 sections, 10 screen guides)
+You only do this once for each source.
+
+<details>
+<summary><b>Gmail</b> (about 10 minutes)</summary>
+
+1. Open [console.cloud.google.com](https://console.cloud.google.com) and create a project.
+2. Search for **Gmail API** and click **Enable**.
+3. Open **OAuth consent screen**, choose **External**, fill in the name and your email, and add yourself under **Test users**.
+4. Open **Credentials → Create credentials → OAuth client ID**, choose **Desktop app**, and download the JSON file.
+5. In ContextOS, go to **Sources**, upload that file, then press **Connect Gmail**.
+
+ContextOS can only read your mail, never send or delete it. Google asks you to sign in again every 7 days while the app is in test mode; Sources will tell you when.
+</details>
+
+<details>
+<summary><b>Slack</b> (about 3 minutes)</summary>
+
+1. Open [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From scratch** and pick your workspace.
+2. Under **OAuth & Permissions → User Token Scopes**, add:
+   `channels:history` `channels:read` `groups:history` `groups:read` `im:history` `im:read` `mpim:history` `mpim:read` `users:read`
+3. Click **Install to Workspace** and copy the token that starts with `xoxp-`.
+4. Paste it into **Sources → Slack user token**.
+
+On a work Slack, check that your company is OK with this first.
+</details>
+
+<details>
+<summary><b>Discord</b> (about 3 minutes, servers only)</summary>
+
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application → Bot** → **Reset Token** and copy the token.
+2. On the same page, turn on **Message Content Intent**.
+3. Under **OAuth2 → URL Generator**, tick `bot`, then **View Channels** and **Read Message History**. Open the link and add the bot to your servers.
+4. Paste the token into **Sources → Discord bot token**.
+
+Discord doesn't let apps read your private DMs, so only servers are included.
+</details>
+
+---
+
+## How it works
+
+```
+Gmail, Slack, Discord
+        │  every 15 min: fetch new messages
+        ▼
+   Local database  (~/.contextos)
+        │
+        ├── Today:  pick today's messages → drop the noise → Claude writes the briefing
+        │           → every claim must cite a real message, or it's flagged
+        │
+        └── Ask:    Claude searches your messages with tools until it can answer
+```
+
+A few things worth knowing:
+
+- **Noise is removed before Claude sees it.** Promotions and muted channels are skipped, and newsletters and bots are cut to one line each. That keeps briefings cheap and focused. A typical day costs a few cents.
+- **Busy days are handled in two steps.** If there's too much to read at once, a faster model summarizes it in parts first.
+- **Your 👍 / 👎 votes are saved**, along with anything you type into "Did it miss something?". Over time that becomes a test set for making the briefing better.
+
+If you're reading the code to learn, start with `contextos/digest.py` (how the briefing is made) and `contextos/ask.py` (how the question answering works).
+
+---
+
+## Privacy
+
+- Everything is stored on your computer in `~/.contextos`. Keys are saved there with owner-only access.
+- The website only accepts requests from your own computer.
+- To write a briefing, the text of the day's messages is sent to Claude.
+
+---
+
+## For developers
+
+```bash
+pip install -e ".[dev]"
+pytest                      # runs offline, no keys needed
+contextos today             # the same briefing, printed in the terminal
+contextos ask "question"
+contextos status
+```
+
+The earlier version of this project is saved at git tag `contextos-prototype`.

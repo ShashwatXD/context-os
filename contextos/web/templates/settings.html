@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Settings · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Keys, tokens and preferences</p>
+    <h1>Settings</h1>
+  </div>
+</section>
+{% if saved %}<p class="notice ok">Saved.</p>{% endif %}
+
+<form class="card settings" method="post" action="/settings">
+  <h2>Settings</h2>
+
+  <fieldset>
+    <legend>About you</legend>
+    <label>Your name <input name="user_name" value="{{ cfg.user_name }}" placeholder="Shashwat"></label>
+    <label>What matters to you <span class="muted small">(goes into every prompt)</span>
+      <textarea name="about_me" rows="2" placeholder="Engineer at Acme. I care about direct asks, reviews and deadlines.">{{ cfg.about_me }}</textarea>
+    </label>
+    <label>Mute <span class="muted small">(comma-separated channels or senders to ignore)</span>
+      <input name="mute" value="{{ cfg.mute | join(', ') }}" placeholder="#random, linkedin.com">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Keys and tokens <span class="muted small">(stored only on this machine; leave blank to keep the current one)</span></legend>
+    <label>Anthropic API key
+      <input name="anthropic_api_key" type="password" autocomplete="off"
+             placeholder="{{ '•••••••• saved' if secrets.anthropic_api_key else ('using ANTHROPIC_API_KEY from .env' if env_key else 'sk-ant-…') }}">
+    </label>
+    <label>Slack user token
+      <input name="slack_token" type="password" autocomplete="off" placeholder="{{ '•••••••• saved' if secrets.slack_token else 'xoxp-…' }}">
+    </label>
+    <label>Discord bot token
+      <input name="discord_token" type="password" autocomplete="off" placeholder="{{ '•••••••• saved' if secrets.discord_token else 'bot token' }}">
+    </label>
+    <label>Your Discord user ID <span class="muted small">(to spot @mentions of you)</span>
+      <input name="discord_user_id" value="{{ cfg.discord_user_id }}">
+    </label>
+  </fieldset>
+
+  <fieldset class="row">
+    <legend>Schedule</legend>
+    <label>Morning briefing at
+      <select name="morning_hour">
+        {% for h in range(0, 24) %}<option value="{{ h }}" {{ 'selected' if h == cfg.morning_hour }}>{{ '%02d' % h }}:00</option>{% endfor %}
+      </select>
+    </label>
+    <label>Sync every
+      <select name="auto_sync_minutes">
+        {% for m in [5, 15, 30, 60] %}<option value="{{ m }}" {{ 'selected' if m == cfg.auto_sync_minutes }}>{{ m }} min</option>{% endfor %}
+      </select>
+    </label>
+  </fieldset>
+
+  <button class="btn primary" type="submit">Save</button>
+</form>
+{% endblock %}

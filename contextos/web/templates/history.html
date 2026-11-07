@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}History · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Every briefing is kept</p>
+    <h1>History</h1>
+  </div>
+</section>
+
+{% for day, recs in days.items() %}
+<section class="section">
+  <h2 class="section-title">{{ day }}</h2>
+  {% for rec in recs %}
+  <a class="card history-row" href="/digest/{{ rec.id }}">
+    <span class="muted small">{{ rec.created_at | local }}</span>
+    <span class="history-headline">{{ rec.output.headline or "Briefing" }}</span>
+    <span class="muted small">{{ rec.output.needs_you|length }} need you · {{ rec.output.important|length }} important</span>
+  </a>
+  {% endfor %}
+</section>
+{% else %}
+<p class="empty">No briefings yet. They'll show up here once you've written one.</p>
+{% endfor %}
+{% endblock %}

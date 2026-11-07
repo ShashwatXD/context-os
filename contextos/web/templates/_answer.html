@@ -1,0 +1,9 @@
+<article class="card answer">
+  <p class="question">{{ a.question }}</p>
+  <div class="answer-body">{{ a.html }}</div>
+  <p class="muted small">
+    {{ a.created_at | ago }} · {{ a.meta.steps }} step{{ 's' if a.meta.steps != 1 }}
+    {% if a.cost is not none %} · ${{ '%.3f' % a.cost }}{% endif %}
+    {% if a.meta.unknown_refs %} · <span class="warn">{{ a.meta.unknown_refs|length }} citation(s) to messages it never saw</span>{% endif %}
+  </p>
+</article>

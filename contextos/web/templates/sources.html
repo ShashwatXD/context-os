@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Sources · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Where ContextOS reads from</p>
+    <h1>Sources</h1>
+  </div>
+  <div class="hero-actions">
+    <button class="btn" id="sync-now" {% if not any_source %}disabled{% endif %}>Sync now</button>
+  </div>
+</section>
+<div id="progress" class="progress" hidden></div>
+
+<section class="grid">
+  {% for r in rows %}
+  <div class="card source">
+    <div class="source-head">
+      <h2>{{ {'gmail': '✉️ Gmail', 'slack': '💬 Slack', 'discord': '🎮 Discord'}[r.name] }}</h2>
+      <span class="badge {{ 'ok' if r.configured else '' }}">{{ 'connected' if r.configured else 'not connected' }}</span>
+    </div>
+    <p class="muted small">
+      {{ r.count }} message{{ '' if r.count == 1 else 's' }} stored
+      {% if r.last %} · synced {{ r.last | ago }}{% endif %}
+      {% if r.log and r.log.new %} · {{ r.log.new }} new last time{% endif %}
+    </p>
+    {% if r.log and r.log.error %}<p class="error small">Last sync failed: {{ r.log.error }}</p>{% endif %}
+
+    {% if r.name == 'gmail' %}
+      {% if gmail_token %}
+        <form method="post" action="/settings/gmail-disconnect"><button class="btn ghost small">Disconnect</button></form>
+      {% elif gmail_creds %}
+        <button class="btn primary" id="gmail-connect">Connect Gmail</button>
+        <p class="muted small">Opens Google sign-in in a new tab. Read-only access.</p>
+      {% else %}
+        <form method="post" action="/settings/gmail-credentials" enctype="multipart/form-data" class="upload">
+          <label class="muted small">Step 1: upload your Google OAuth client file (README → Gmail explains how to get it)</label>
+          <input type="file" name="file" accept=".json,application/json" required>
+          <button class="btn">Upload</button>
+        </form>
+      {% endif %}
+    {% elif not r.configured %}
+      <p class="muted small">Add a token in <a href="/settings">Settings</a>. The README has the 2-minute setup.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endblock %}

@@ -37,3 +37,7 @@ interview/
 *.interview.md
 
 
+
+# Secrets
+.env
+*.egg-info/
