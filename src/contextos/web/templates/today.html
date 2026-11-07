@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Briefing' if history else 'Today' }} · ContextOS{% endblock %}
+{% block content %}
+{% set d = view.digest if view else None %}
+
+<section class="hero">
+  <div>
+    <p class="eyebrow">
+      {% if d %}{{ d.start | local('%A %d %B') }} · {{ d.start | local('%H:%M') }}–{{ d.end | local('%H:%M') }}
+      {% else %}{{ 'Since midnight' if window == 'today' else 'Last 24 hours' }}{% endif %}
+    </p>
+    <h1>{% if history %}Briefing{% else %}Your day{% endif %}</h1>
+  </div>
+  {% if not history %}
+  <div class="hero-actions">
+    <div class="seg">
+      <a href="/today?window=today" class="{{ 'on' if window == 'today' }}">Since midnight</a>
+      <a href="/today?window=24h" class="{{ 'on' if window == '24h' }}">Last 24h</a>
+    </div>
+    <button class="btn primary" id="refresh" data-window="{{ window }}" {% if not any_source or not has_key %}disabled{% endif %}>
+      {{ 'Refresh' if d else 'Write my briefing' }}
+    </button>
+  </div>
+  {% endif %}
+</section>
+
+<div id="progress" class="progress" hidden></div>
+
+{% if not history and (not any_source or not has_key) %}
+<section class="card setup">
+  <h2>Let's get you set up</h2>
+  <ol>
+    <li class="{{ 'done' if has_key }}">Add <code>GEMINI_API_KEY</code> to your <code>.env</code> file and restart</li>
+    <li class="{{ 'done' if any_source }}">Connect Gmail, Slack or Discord in <a href="/sources">Sources</a></li>
+    <li>Come back here and press <b>Write my briefing</b></li>
+  </ol>
+  {% if has_key %}<a class="btn primary" href="/sources">Connect a source</a>{% endif %}
+</section>
+{% endif %}
+
+{% if d %}
+  {% if not history and view.new_since %}
+  <p class="notice">{{ view.new_since }} new message{{ 's' if view.new_since != 1 }} since this briefing was written {{ d.created_at | ago }}. <a href="#" data-refresh>Refresh</a></p>
+  {% endif %}
+
+  {% if view.headline %}<p class="headline">{{ view.headline }}</p>{% endif %}
+
+  {% if view.reminders %}
+  <section class="section">
+    <h2 class="section-title">⏰ Back from snooze <span class="count">{{ view.reminders|length }}</span></h2>
+    {% for it in view.reminders %}{% include "_item.html" %}{% endfor %}
+  </section>
+  {% endif %}
+
+  {% for s in view.sections %}
+  <section class="section section-{{ s.key }}">
+    <h2 class="section-title">{{ s.icon }} {{ s.title }} <span class="count">{{ s.open|length }}</span></h2>
+    {% for it in s.open %}{% include "_item.html" %}{% endfor %}
+    {% if not s.open %}<p class="empty">{% if s.key == 'needs_you' %}Nothing needs you right now.{% else %}Nothing here.{% endif %}</p>{% endif %}
+    {% if s.snoozed %}
+    <details class="fold"><summary>{{ s.snoozed|length }} snoozed until tomorrow</summary>
+      {% for it in s.snoozed %}{% include "_item.html" %}{% endfor %}
+    </details>
+    {% endif %}
+    {% if s.done %}
+    <details class="fold"><summary>{{ s.done|length }} done</summary>
+      {% for it in s.done %}{% include "_item.html" %}{% endfor %}
+    </details>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <footer class="stats">
+    {% set st = view.stats %}
+    {% if st.read %}<span>Read {% for src, n in st.read.items() %}{{ n }} {{ src }}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
+    {% if st.automated %}<span>{{ st.automated }} automated (headlines only)</span>{% endif %}
+    {% if st.skipped %}<span>skipped {% for why, n in st.skipped.items() %}{{ n }} {{ why }}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
+    {% if st.context_tokens %}<span>~{{ '{:,}'.format(st.context_tokens) }} tokens{% if st.chunks > 1 %} in {{ st.chunks }} parts{% endif %}</span>{% endif %}
+    {% if view.cost is not none %}<span>${{ '%.3f' % view.cost }}</span>{% endif %}
+    {% if view.llm_tokens %}<span>{{ '{:,}'.format(view.llm_tokens) }} Gemini tokens used</span>{% endif %}
+    {% if st.invalid_citations %}<span class="warn">{{ st.invalid_citations }} invalid citations removed</span>{% endif %}
+  </footer>
+
+  <form class="missed" data-missed>
+    <input type="hidden" name="digest_id" value="{{ d.id }}">
+    <input name="note" placeholder="Did it miss something important? Tell it here…" autocomplete="off">
+    <button class="btn ghost" type="submit">Send</button>
+  </form>
+
+{% elif not history and any_source and has_key %}
+<section class="card empty-state">
+  <h2>No briefing yet for this window</h2>
+  <p class="muted">ContextOS writes one automatically every morning. You can also write one now.</p>
+</section>
+{% endif %}
+{% endblock %}

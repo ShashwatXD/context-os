@@ -1,22 +1,25 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from contextos.config import Config
 from contextos.models import Message
-from contextos.store import Store
+from contextos.storage import Store
 
-NOW = datetime(2026, 11, 7, 15, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 7, 15, 0, tzinfo=UTC)
 
 
 def msg(n: int, **kw) -> Message:
     base = dict(
-        id=f"slack:C1:{n}", source="slack", channel="#eng", author="Alice",
-        ts=NOW - timedelta(hours=5) + timedelta(minutes=n), text=f"message number {n}",
+        id=f"slack:C1:{n}",
+        source="slack",
+        channel="#eng",
+        author="Alice",
+        ts=NOW - timedelta(hours=5) + timedelta(minutes=n),
+        text=f"message number {n}",
     )
     base.update(kw)
     return Message(**base)
@@ -35,7 +38,7 @@ def store(cfg: Config) -> Store:
 
 
 class FakeLLM:
-    """Stands in for ctx.llm.LLM. Records prompts; returns canned outputs."""
+    """Stands in for contextos.llm.LLM. Records calls; returns canned outputs. No network."""
 
     def __init__(self, json_out=None, text_out="- notes [m1]", turns=None):
         self.json_out = json_out
@@ -51,24 +54,32 @@ class FakeLLM:
         self.calls.append({"kind": "json", **kw})
         return self.json_out
 
-    def create(self, **kw):
-        self.calls.append({"kind": "create", **kw, "messages": list(kw["messages"])})
+    @staticmethod
+    def user_message(text):
+        return {"role": "user", "text": text}
+
+    @staticmethod
+    def tool_results(results):
+        return {"role": "user", "results": [(c.name, content, is_error) for c, content, is_error in results]}
+
+    def tool_turn(self, **kw):
+        self.calls.append({"kind": "tool_turn", **kw, "history": list(kw["history"])})
         return self.turns.pop(0)
 
     def usage_summary(self):
-        return {}
+        return {"total_tokens": 1234}
 
     def cost_usd(self):
-        return 0.0
+        return None
 
 
-def text_block(t):
-    return SimpleNamespace(type="text", text=t)
+def tool_call(name, args):
+    from contextos.llm import ToolCall
+
+    return ToolCall(id=None, name=name, args=args)
 
 
-def tool_use(name, inp, id="tu_1"):
-    return SimpleNamespace(type="tool_use", name=name, input=inp, id=id)
+def turn(text="", *calls):
+    from contextos.llm import ToolTurn
 
-
-def turn(stop_reason, *content):
-    return SimpleNamespace(stop_reason=stop_reason, content=list(content))
+    return ToolTurn(text=text, calls=list(calls), message={"role": "model", "text": text})

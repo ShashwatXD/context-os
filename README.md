@@ -1,128 +1,193 @@
-# ContextOS
+# ContextOS: Your Day, Summarized
 
-A small website that reads your Gmail, Slack and Discord and tells you what happened today.
+ContextOS reads your Gmail, Slack and Discord and writes a short briefing of what happened today: what needs you, what's important, and what's just FYI. It runs on your own computer, and every point links back to the message it came from.
 
-It runs on your own computer. Open it in the morning and you get a short briefing:
+[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Google Gemini](https://img.shields.io/badge/Google%20Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
+[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 
-- **Needs you**: things you should reply to or act on
-- **Important**: things you'd be upset to miss
-- **FYI**: everything else worth a line
+## Overview
 
-Every item links back to the original message, so you can check it yourself.
+Your messages are spread across too many places. ContextOS brings them into one local database, removes the noise, and asks **Gemini** to tell you what actually matters today.
 
----
+It is built around one rule: **every claim must point to a real message.** The model has to cite its sources, ContextOS checks each citation, and anything it can't verify is clearly marked. You stay in control of what you trust.
 
-## Start
+## Core Features
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-contextos web
+| Feature | Description |
+|---|---|
+| **Daily Briefing** | A morning summary in three sections: *Needs you*, *Important* and *FYI*. |
+| **Source Links** | Every item links to the original email or message, so you can check it in one click. |
+| **Ask Anything** | Ask "what did Priya say about the contract?" and get an answer with links. |
+| **Done and Snooze** | Mark items as handled or push them to tomorrow. A topic comes back if there's news. |
+| **Noise Filter** | Promotions, muted channels and bot chatter are removed before the model sees them. |
+| **Runs on Its Own** | Syncs every 15 minutes and writes a fresh briefing each morning. |
+| **Feedback Loop** | Your 👍 / 👎 votes and "you missed this" notes are saved, so you can measure and improve quality. |
+| **Private by Default** | Everything is stored on your machine. The app only answers to your own computer. |
+
+## How It Works
+
+```mermaid
+flowchart LR
+    A[Gmail] --> D[Sync every 15 min]
+    B[Slack] --> D
+    C[Discord] --> D
+    D --> E[(Local database)]
+    E --> F[Filter noise]
+    F --> G[Group into conversations]
+    G --> H[Gemini writes briefing]
+    H --> I[Check every citation]
+    I --> J[Today page]
+    E --> K[Ask: Gemini searches with tools]
+    K --> L[Answer with links]
 ```
 
-Your browser opens at **http://localhost:8000**. Go to **Sources** and:
+1. **Sync**: new messages are fetched from each connected source and saved locally.
+2. **Filter**: promotions and muted channels are skipped. Newsletters and bots are cut down to a one-line headline.
+3. **Assemble**: messages are grouped by channel and thread, and each one gets a short tag like `m42`.
+4. **Write**: Gemini turns this into a structured briefing. On very busy days, a lighter model summarizes in parts first.
+5. **Verify**: every tag the model cites is checked against the real messages. Anything unsupported is flagged.
+6. **Ask**: for questions, Gemini uses search tools over your messages, step by step, until it can answer.
 
-1. Paste your Anthropic API key (get one at [platform.claude.com](https://platform.claude.com)).
-2. Connect at least one source (steps below).
-3. Go back to **Today** and press **Write my briefing**.
+A deeper walkthrough is in [docs/architecture.md](docs/architecture.md).
 
-After that, ContextOS syncs every 15 minutes and writes a new briefing each morning. You only need to open the page.
+## Tech Stack
 
----
+- **Language**: Python 3.11+
+- **Web**: FastAPI, Jinja templates, plain JavaScript (no build step)
+- **AI**: Google Gemini (`gemini-3.8-flash` for briefings and questions, `gemini-3.1-flash-lite` for bulk summaries)
+- **Storage**: SQLite with full-text search
+- **Sources**: Gmail API, Slack Web API, Discord API
 
-## Pages
+## Project Structure
 
-| Page | What it's for |
-|---|---|
-| **Today** | Your briefing. Mark things **Done**, push them to **Tomorrow**, or rate them 👍 / 👎. |
-| **Ask** | Ask a question like "what did Priya say about the contract?" and get an answer with links. |
-| **History** | Every past briefing. |
-| **Sources** | Connect accounts, add keys, set your name and what matters to you. |
+```
+context-os/
+├── src/contextos/
+│   ├── config.py          # settings from .env and the Settings tab
+│   ├── models.py          # the Message shape every source maps into
+│   ├── llm/               # Gemini client: text, JSON output, tool calling
+│   ├── sources/           # Gmail, Slack and Discord connectors
+│   ├── storage/           # SQLite store and full-text search
+│   ├── pipeline/          # noise filter, context assembly, briefing, ask
+│   ├── services/          # sync, background jobs, scheduler
+│   ├── web/               # FastAPI app, pages, styles
+│   └── cli/               # terminal commands
+├── tests/
+│   ├── unit/              # pipeline, sources, storage, Gemini wrapper
+│   └── web/               # pages, actions, jobs, security checks
+├── docs/architecture.md
+├── .env.example
+├── Makefile
+└── pyproject.toml
+```
 
----
+## Getting Started
 
-## Connecting sources
+### Prerequisites
 
-You only do this once for each source.
+- Python 3.11 or newer
+- A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
+- At least one of: a Gmail account, a Slack workspace, a Discord server
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/ShashwatXD/context-os.git
+cd context-os
+```
+
+### 2. Install Dependencies
+
+```bash
+make install
+```
+
+This creates a `.venv` folder and installs ContextOS into it.
+
+### 3. Set Up Environment Variables
+
+1. Copy the example file:
+   ```bash
+   cp .env.example .env
+   ```
+2. Open `.env` and add your Gemini key:
+   ```env
+   GEMINI_API_KEY="your_gemini_api_key_here"
+   ```
+
+The Gemini key is only ever read from `.env`. It is never entered or shown in the app.
+
+### 4. Run the App
+
+```bash
+make dev
+```
+
+Your browser opens [http://localhost:8000](http://localhost:8000).
+
+## Connecting Sources
+
+Open the **Sources** tab to connect accounts, and the **Settings** tab to paste tokens. Each source only needs to be set up once.
 
 <details>
 <summary><b>Gmail</b> (about 10 minutes)</summary>
 
-1. Open [console.cloud.google.com](https://console.cloud.google.com) and create a project.
+1. Open [Google Cloud Console](https://console.cloud.google.com) and create a project.
 2. Search for **Gmail API** and click **Enable**.
-3. Open **OAuth consent screen**, choose **External**, fill in the name and your email, and add yourself under **Test users**.
-4. Open **Credentials → Create credentials → OAuth client ID**, choose **Desktop app**, and download the JSON file.
-5. In ContextOS, go to **Sources**, upload that file, then press **Connect Gmail**.
+3. Open **OAuth consent screen**, choose **External**, and add yourself under **Test users**.
+4. Go to **Credentials → Create credentials → OAuth client ID**, choose **Desktop app**, and download the JSON file.
+5. In ContextOS, open **Sources**, upload the file, and click **Connect Gmail**.
 
-ContextOS can only read your mail, never send or delete it. Google asks you to sign in again every 7 days while the app is in test mode; Sources will tell you when.
+Access is read-only. While the Google app is in test mode, you'll be asked to sign in again every 7 days.
 </details>
 
 <details>
 <summary><b>Slack</b> (about 3 minutes)</summary>
 
-1. Open [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From scratch** and pick your workspace.
+1. Open [api.slack.com/apps](https://api.slack.com/apps) and choose **Create New App → From scratch**.
 2. Under **OAuth & Permissions → User Token Scopes**, add:
    `channels:history` `channels:read` `groups:history` `groups:read` `im:history` `im:read` `mpim:history` `mpim:read` `users:read`
-3. Click **Install to Workspace** and copy the token that starts with `xoxp-`.
-4. Paste it into **Sources → Slack user token**.
-
-On a work Slack, check that your company is OK with this first.
+3. Click **Install to Workspace** and copy the token starting with `xoxp-`.
+4. Paste it into **Settings → Slack user token**.
 </details>
 
 <details>
 <summary><b>Discord</b> (about 3 minutes, servers only)</summary>
 
-1. Open the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application → Bot** → **Reset Token** and copy the token.
+1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an application, open **Bot**, and click **Reset Token**.
 2. On the same page, turn on **Message Content Intent**.
-3. Under **OAuth2 → URL Generator**, tick `bot`, then **View Channels** and **Read Message History**. Open the link and add the bot to your servers.
-4. Paste the token into **Sources → Discord bot token**.
+3. Under **OAuth2 → URL Generator**, select `bot` with **View Channels** and **Read Message History**, then use the link to add the bot to your servers.
+4. Paste the token into **Settings → Discord bot token**.
 
-Discord doesn't let apps read your private DMs, so only servers are included.
+Discord does not allow apps to read personal DMs, so only servers are included.
 </details>
 
----
+## Usage
 
-## How it works
+1. Open the **Today** tab and click **Write my briefing** (after the first day it's written for you each morning).
+2. Click a source link on any item to jump to the original message.
+3. Mark items **Done** or move them to **Tomorrow**.
+4. Use **Ask** for anything the briefing doesn't cover.
+5. Rate items with 👍 / 👎 to build up a record of what the briefing gets right.
 
+## Development
+
+```bash
+make test      # run all tests (offline, no keys needed)
+make lint      # check code style
+make format    # auto-format code
 ```
-Gmail, Slack, Discord
-        │  every 15 min: fetch new messages
-        ▼
-   Local database  (~/.contextos)
-        │
-        ├── Today:  pick today's messages → drop the noise → Claude writes the briefing
-        │           → every claim must cite a real message, or it's flagged
-        │
-        └── Ask:    Claude searches your messages with tools until it can answer
-```
 
-A few things worth knowing:
-
-- **Noise is removed before Claude sees it.** Promotions and muted channels are skipped, and newsletters and bots are cut to one line each. That keeps briefings cheap and focused. A typical day costs a few cents.
-- **Busy days are handled in two steps.** If there's too much to read at once, a faster model summarizes it in parts first.
-- **Your 👍 / 👎 votes are saved**, along with anything you type into "Did it miss something?". Over time that becomes a test set for making the briefing better.
-
-If you're reading the code to learn, start with `contextos/digest.py` (how the briefing is made) and `contextos/ask.py` (how the question answering works).
-
----
+The same features are also available in the terminal: `contextos today`, `contextos ask "..."`, `contextos status`.
 
 ## Privacy
 
-- Everything is stored on your computer in `~/.contextos`. Keys are saved there with owner-only access.
-- The website only accepts requests from your own computer.
-- To write a briefing, the text of the day's messages is sent to Claude.
+- All data lives in `~/.contextos` on your computer. Token files are readable only by you.
+- The app only accepts requests from your own machine and blocks requests from other websites.
+- To write a briefing, the text of that day's messages is sent to the Gemini API.
 
----
+## Contributing
 
-## For developers
-
-```bash
-pip install -e ".[dev]"
-pytest                      # runs offline, no keys needed
-contextos today             # the same briefing, printed in the terminal
-contextos ask "question"
-contextos status
-```
-
-The earlier version of this project is saved at git tag `contextos-prototype`.
+Issues and pull requests are welcome. Please run `make test` and `make lint` before opening a pull request.
