@@ -202,7 +202,23 @@ def create_app(
         tz = tasks.local_tz()
         until = views.snooze_until(tz, cfg.morning_hour) if action == "snooze" else None
         store.add_action(digest_id, key, item.get("refs", []), item, action, until)
+        if action == "done":
+            views.close_loops_for(store, item.get("refs", []))
         return _render_item(request, store, item, section, digest_id, tz)
+
+    @app.post("/loops/{loop_id}")
+    def loop_action(loop_id: int, action: str = Form(...), store: Store = Depends(store_dep)):
+        lp = store.get_loop(loop_id)
+        if lp is None:
+            raise HTTPException(404, "loop not found")
+        if action == "done":
+            store.close_loop(loop_id, "marked done")
+        elif action == "reopen":
+            store.update_loop(loop_id, status="open", closed_at=None, closed_reason=None, closed_ref=None,
+                              updated_at=datetime.now(UTC))
+        else:
+            raise HTTPException(400, "unknown action")
+        return RedirectResponse("/today#loops", status_code=303)
 
     @app.post("/items/vote", response_class=HTMLResponse)
     def item_vote(

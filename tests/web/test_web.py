@@ -269,3 +269,22 @@ def test_running_ask_shows_question_on_return(client, store):
 def test_window_choice_is_remembered(client):
     client.get("/today?window=24h")
     assert 'href="/today?window=24h" class="on"' in client.get("/today").text  # no ?window= on return
+
+
+def test_today_shows_open_loops_and_done_closes_them(client, store):
+    from datetime import UTC, datetime, timedelta
+
+    did, m1, _ = seed_digest(store)
+    lid = store.add_loop("you_owe", "Priya", "Approve Q3 invoice", "She needs it by Friday.", "2026-11-13",
+                         [m1.ref], [], datetime.now(UTC) - timedelta(days=2))
+    store.add_loop("owed_to_you", "Bob", "Send the deck", "You asked Monday.", None, [m1.ref], [], datetime.now(UTC))
+    html = client.get("/today").text
+    assert "Still open" in html and "Approve Q3 invoice" in html and "You owe Priya · open 2 days" in html
+    assert "Waiting on others: 1" in html
+
+    r = client.post(f"/loops/{lid}", data={"action": "done"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert store.get_loop(lid).status == "closed"
+    assert "1 loop closed in the last day" in client.get("/today").text
+    client.post(f"/loops/{lid}", data={"action": "reopen"})
+    assert store.get_loop(lid).status == "open"

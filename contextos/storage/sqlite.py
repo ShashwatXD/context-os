@@ -92,6 +92,29 @@ CREATE TABLE IF NOT EXISTS feedback (
     created_at REAL NOT NULL
 );
 
+-- Open loops: commitments that outlive a single day ("Priya asked you to review the invoice by Friday").
+-- This is the briefing's memory. Each day reads the open ones, and they close when the conversation
+-- shows they're resolved: your reply in the thread, the model seeing it settled, you pressing Done,
+-- or going stale.
+CREATE TABLE IF NOT EXISTS loops (
+    id            INTEGER PRIMARY KEY,
+    kind          TEXT NOT NULL,              -- "you_owe" | "owed_to_you"
+    who           TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    detail        TEXT NOT NULL,
+    due           TEXT,                       -- YYYY-MM-DD or NULL
+    status        TEXT NOT NULL DEFAULT 'open',  -- open | closed | stale
+    refs          TEXT NOT NULL,              -- evidence: citation tags, oldest first
+    threads       TEXT NOT NULL,              -- conversation keys where a reply would close it
+    opened_at     REAL NOT NULL,              -- time of the message that opened it
+    updated_at    REAL NOT NULL,              -- last time there was news about it
+    closed_at     REAL,
+    closed_reason TEXT,
+    closed_ref    TEXT,
+    digest_id     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_loops_status ON loops(status);
+
 CREATE TABLE IF NOT EXISTS asks (
     id         INTEGER PRIMARY KEY,
     created_at REAL NOT NULL,
@@ -140,6 +163,29 @@ class ItemAction:
     action: str  # "done" | "snooze" | "reopen"
     until: datetime | None
     created_at: datetime
+
+
+@dataclass
+class Loop:
+    id: int
+    kind: str
+    who: str
+    title: str
+    detail: str
+    due: str | None
+    status: str
+    refs: list[str]
+    threads: list[str]
+    opened_at: datetime
+    updated_at: datetime
+    closed_at: datetime | None = None
+    closed_reason: str | None = None
+    closed_ref: str | None = None
+    digest_id: int | None = None
+
+    @property
+    def ref(self) -> str:
+        return f"L{self.id}"
 
 
 class Store:
@@ -379,6 +425,14 @@ class Store:
             )
             return cur.lastrowid
 
+    def update_digest_meta(self, digest_id: int, updates: dict) -> None:
+        rec = self.get_digest(digest_id)
+        if rec is None:
+            return
+        meta = {**rec.meta, **updates}
+        with self.db:
+            self.db.execute("UPDATE digests SET meta = ? WHERE id = ?", (json.dumps(meta), digest_id))
+
     def get_digest(self, digest_id: int) -> DigestRecord | None:
         row = self.db.execute("SELECT * FROM digests WHERE id = ?", (digest_id,)).fetchone()
         return self._to_digest(row) if row else None
@@ -443,6 +497,54 @@ class Store:
     def feedback_rows(self) -> list[dict]:
         return [dict(r) for r in self.db.execute("SELECT * FROM feedback ORDER BY id").fetchall()]
 
+    # ---- open loops ---------------------------------------------------------
+
+    def add_loop(
+        self, kind: str, who: str, title: str, detail: str, due: str | None, refs: list[str], threads: list[str],
+        opened_at: datetime, digest_id: int | None = None,
+    ) -> int:
+        with self.db:
+            cur = self.db.execute(
+                "INSERT INTO loops (kind, who, title, detail, due, refs, threads, opened_at, updated_at, digest_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (kind, who, title, detail, due, json.dumps(refs), json.dumps(threads), opened_at.timestamp(),
+                 opened_at.timestamp(), digest_id),
+            )
+            return cur.lastrowid
+
+    def update_loop(self, loop_id: int, **fields) -> None:
+        """Change some fields of a loop. Lists are stored as JSON, datetimes as timestamps."""
+        if not fields:
+            return
+        values = []
+        for v in fields.values():
+            if isinstance(v, list):
+                v = json.dumps(v)
+            elif isinstance(v, datetime):
+                v = v.timestamp()
+            values.append(v)
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        with self.db:
+            self.db.execute(f"UPDATE loops SET {cols} WHERE id = ?", (*values, loop_id))
+
+    def close_loop(self, loop_id: int, reason: str, ref: str | None = None, when: datetime | None = None) -> None:
+        self.update_loop(loop_id, status="closed", closed_reason=reason, closed_ref=ref,
+                         closed_at=when or datetime.now(UTC))
+
+    def get_loop(self, loop_id: int) -> Loop | None:
+        row = self.db.execute("SELECT * FROM loops WHERE id = ?", (loop_id,)).fetchone()
+        return self._to_loop(row) if row else None
+
+    def loops(self, status: str | None = "open", limit: int = 200) -> list[Loop]:
+        """Newest news first."""
+        if status:
+            rows = self.db.execute(
+                "SELECT * FROM loops WHERE status = ? ORDER BY updated_at DESC LIMIT ?", (status, limit)
+            ).fetchall()
+        else:
+            rows = self.db.execute("SELECT * FROM loops ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [self._to_loop(r) for r in rows]
+
     # ---- ask history --------------------------------------------------------
 
     def save_ask(self, question: str, answer: str, refs: list[str], meta: dict) -> int:
@@ -479,6 +581,14 @@ class Store:
             json.loads(r["message_rids"]),
             json.loads(r["output"]),
             json.loads(r["meta"]),
+        )
+
+    @staticmethod
+    def _to_loop(r: sqlite3.Row) -> Loop:
+        return Loop(
+            r["id"], r["kind"], r["who"], r["title"], r["detail"], r["due"], r["status"],
+            json.loads(r["refs"]), json.loads(r["threads"]), _dt(r["opened_at"]), _dt(r["updated_at"]),
+            _dt(r["closed_at"]), r["closed_reason"], r["closed_ref"], r["digest_id"],
         )
 
     @staticmethod

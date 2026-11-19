@@ -11,7 +11,7 @@ from markupsafe import Markup, escape
 
 from contextos.models import Message
 from contextos.pipeline.digest import SECTIONS
-from contextos.storage import DigestRecord, ItemAction, Store
+from contextos.storage import DigestRecord, ItemAction, Loop, Store
 
 SECTION_INFO = {
     "needs_you": ("Needs you", ""),
@@ -136,6 +136,7 @@ def digest_view(store: Store, rec: DigestRecord, tz: tzinfo, now: datetime | Non
 
     return {
         "digest": rec,
+        "loops": loops_view(store, tz, now),
         "headline": rec.output.get("headline", ""),
         "sections": sections,
         "reminders": reminders,
@@ -144,6 +145,52 @@ def digest_view(store: Store, rec: DigestRecord, tz: tzinfo, now: datetime | Non
         "llm_tokens": (rec.meta.get("llm") or {}).get("total_tokens"),
         "new_since": store.count_since(rec.end),
     }
+
+
+@dataclass
+class LoopView:
+    id: int
+    kind: str
+    who: str
+    title: str
+    detail: str
+    due: str | None
+    age: str
+    sources: list[Source]
+    status: str
+    closed_reason: str | None = None
+    overdue: bool = False
+
+
+def loops_view(store: Store, tz: tzinfo, now: datetime) -> dict:
+    """Open loops (the memory), plus what closed in the last day so you can see *why* each one went away."""
+
+    def view(lp: Loop) -> LoopView:
+        days = (now - lp.opened_at).days
+        age = "today" if days == 0 else ("yesterday" if days == 1 else f"{days} days")
+        overdue = bool(lp.due) and lp.due < now.astimezone(tz).strftime("%Y-%m-%d")
+        return LoopView(lp.id, lp.kind, lp.who, lp.title, lp.detail, lp.due, age,
+                        sources_for(lp.refs[-3:], store.by_refs(lp.refs[-3:]), tz), lp.status, lp.closed_reason, overdue)
+
+    open_ = store.loops("open")
+    open_.sort(key=lambda lp: (lp.due is None, lp.due or "", lp.kind != "you_owe", lp.opened_at))
+    recent = [lp for lp in store.loops(None, limit=50)
+              if lp.status != "open" and lp.closed_at and lp.closed_at > now - timedelta(days=1)]
+    return {
+        "you_owe": [view(lp) for lp in open_ if lp.kind == "you_owe"],
+        "owed_to_you": [view(lp) for lp in open_ if lp.kind == "owed_to_you"],
+        "recently_closed": [view(lp) for lp in recent],
+    }
+
+
+def close_loops_for(store: Store, refs: list[str]) -> int:
+    """Marking a briefing item Done also closes the loops it's about (they share evidence)."""
+    wanted, n = set(refs), 0
+    for lp in store.loops("open"):
+        if wanted & set(lp.refs):
+            store.close_loop(lp.id, "marked done", sorted(wanted)[0])
+            n += 1
+    return n
 
 
 def reminder_items(store: Store, actions: list[ItemAction], current: DigestRecord, tz: tzinfo, now: datetime) -> list[ItemView]:

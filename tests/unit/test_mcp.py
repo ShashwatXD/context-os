@@ -29,7 +29,7 @@ def make(cfg, monkeypatch, store):
 def test_tools_are_listed_read_only(cfg, monkeypatch, store):
     server = make(cfg, monkeypatch, store)
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
-    assert set(tools) == {"search_messages", "get_thread", "recent_activity", "latest_briefing"}
+    assert set(tools) == {"search_messages", "get_thread", "recent_activity", "latest_briefing", "open_loops"}
     assert all(t.annotations.read_only_hint for t in tools.values())
     assert "person" in tools["search_messages"].input_schema["properties"]
 

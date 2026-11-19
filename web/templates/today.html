@@ -52,6 +52,19 @@
   </section>
   {% endif %}
 
+  {% set lv = view.loops %}
+  {% if lv and (lv.you_owe or lv.owed_to_you) %}
+  <section class="section section-loops" id="loops">
+    <h2 class="section-title" title="Carried over from earlier days. They close when you reply, when the messages show them settled, or when you press Done.">Still open <span class="count">{{ lv.you_owe|length + lv.owed_to_you|length }}</span></h2>
+    {% for lp in lv.you_owe %}{% include "_loop.html" %}{% endfor %}
+    {% if lv.owed_to_you %}
+    <details class="fold"><summary>Waiting on others: {{ lv.owed_to_you|length }}</summary>
+      {% for lp in lv.owed_to_you %}{% include "_loop.html" %}{% endfor %}
+    </details>
+    {% endif %}
+  </section>
+  {% endif %}
+
   {% for s in view.sections %}
   <section class="section section-{{ s.key }}">
     <h2 class="section-title">{{ s.title }} <span class="count">{{ s.open|length }}</span></h2>
@@ -69,6 +82,12 @@
     {% endif %}
   </section>
   {% endfor %}
+
+  {% if lv and lv.recently_closed %}
+  <details class="fold"><summary>{{ lv.recently_closed|length }} loop{{ 's' if lv.recently_closed|length != 1 }} closed in the last day</summary>
+    {% for lp in lv.recently_closed %}{% include "_loop.html" %}{% endfor %}
+  </details>
+  {% endif %}
 
   <footer class="stats">
     {% set st = view.stats %}

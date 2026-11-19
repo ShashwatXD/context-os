@@ -1,0 +1,27 @@
+<article class="item loop state-{{ 'open' if lp.status == 'open' else 'done' }}">
+  <div class="item-body">
+    <h3>{{ lp.title }}
+      {% if lp.due %}<span class="badge {{ 'warn' if lp.overdue }}">{{ 'overdue · ' if lp.overdue }}due {{ lp.due }}</span>{% endif %}
+    </h3>
+    {% if lp.status == 'open' %}
+      <p>{{ lp.detail }}</p>
+      <p class="muted small">{{ 'You owe' if lp.kind == 'you_owe' else 'Waiting on' }} {{ lp.who }} · open {{ lp.age }}</p>
+    {% else %}
+      <p class="muted small">{{ lp.who }} · {{ 'went quiet, forgotten' if lp.status == 'stale' else lp.closed_reason }}</p>
+    {% endif %}
+    {% if lp.sources and lp.status == 'open' %}
+    <div class="sources">
+      {% for s in lp.sources %}
+      <a class="chip" href="{{ s.url or '#' }}" target="_blank" rel="noopener" title="{{ s.tooltip }}"><span class="chip-src">{{ s.icon }}</span> {{ s.label }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  <form class="item-actions" method="post" action="/loops/{{ lp.id }}">
+    {% if lp.status == 'open' %}
+      <button class="btn ghost" type="submit" name="action" value="done" title="Close this loop">Done</button>
+    {% else %}
+      <button class="btn ghost" type="submit" name="action" value="reopen" title="It's not actually closed">Reopen</button>
+    {% endif %}
+  </form>
+</article>
