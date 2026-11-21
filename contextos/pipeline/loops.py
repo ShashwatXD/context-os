@@ -73,6 +73,8 @@ Open loops (memory across days):
 original messages are not shown again.
 - loops_updated: for each carried loop that today's messages touch, say still_open or resolved and cite \
 today's messages that show it. Only resolve with evidence. Skip loops with no news.
+- <loop_candidates> lists message tags that look like unanswered requests by simple rules. Open a loop \
+for each one that is a real ask; ignore the rest (rhetorical questions, jokes, already handled).
 - loops_opened: new commitments from today's messages that will likely outlive today: a request, question \
 or deadline aimed at the user that they haven't answered (you_owe), or something the user asked for and \
 is waiting on (owed_to_you). Not routine chatter, not things already handled. Never re-open a carried loop.
@@ -91,6 +93,8 @@ class LoopReport:
     auto_closed: int = 0
     stale: int = 0
     carried_tokens: int = 0  # what the memory costs in the prompt
+    candidates: int = 0  # rule-detected possible loops shown to the model
+    candidates_opened: int = 0  # ...of which the model opened (rule precision, as judged by the model)
     rejected: list[str] = field(default_factory=list)  # model output we refused, and why
 
     def as_dict(self) -> dict:
@@ -117,28 +121,88 @@ def conversation_key(m: Message) -> str | None:
 
 
 def auto_close(store: Store, loops: list[Loop], messages: list[Message]) -> list[Loop]:
-    """Close 'you_owe' loops where the user wrote in the same conversation after the last news.
+    """Move loops forward from replies in the same conversation, using each reply's intent. No model call.
 
-    The cheapest correct signal there is, and it runs before the model sees anything, so a loop you
-    already handled doesn't cost tokens or risk showing up as "needs you".
+    Someone waiting on YOU (you_owe), and you reply after the last news:
+        info / decision          → closed: you answered ("here's the signed copy")
+        commitment / ack         → promised: "I'll do it Friday" or "ok" is not done, so it stays open
+        question / request       → still open: you asked a follow-up
+    YOU waiting on someone (owed_to_you), they reply in the same thread:
+        info / decision          → closed: they delivered
+        commitment / ack         → promised by them
+    Only thread keys count for owed_to_you; in a DM their next message may be about anything else.
+
+    Returns the loops it closed. Runs before the model sees anything, so handled loops cost no tokens.
     """
-    mine: dict[str, list[Message]] = {}
+    by_key: dict[str, list[Message]] = {}
     for m in messages:
         key = conversation_key(m)
-        if m.is_from_me and key:
-            mine.setdefault(key, []).append(m)
+        if key and not m.is_automated:
+            by_key.setdefault(key, []).append(m)
     closed = []
     for loop in loops:
-        if loop.kind != "you_owe" or loop.status != "open":
+        if loop.status != "open":
             continue
+        mine = loop.kind == "you_owe"
+        keys = loop.threads if mine else [k for k in loop.threads if ":t:" in k]
         replies = sorted(
-            (m for key in loop.threads for m in mine.get(key, []) if m.ts > loop.updated_at), key=lambda m: m.ts
+            (m for k in keys for m in by_key.get(k, [])
+             if m.ts > loop.updated_at and m.is_from_me == mine and m.ref not in loop.refs),
+            key=lambda m: m.ts,
         )
-        if replies:
-            store.close_loop(loop.id, "you replied", replies[0].ref, replies[0].ts)
-            loop.status = "closed"
-            closed.append(loop)
+        for reply in replies:  # in order: "I'll send it" then "sent!" ends closed
+            intent = reply.intent or "info"
+            if intent in ("info", "decision"):
+                reason = "you replied" if mine else f"{reply.author} replied"
+                store.close_loop(loop.id, reason, reply.ref, reply.ts)
+                loop.status = "closed"
+                closed.append(loop)
+                break
+            fields: dict = {"updated_at": reply.ts, "refs": list(dict.fromkeys(loop.refs + [reply.ref]))}
+            if intent in ("commitment", "ack"):
+                fields["promised_at"] = reply.ts
+                fields["due"] = reply.due_hint or loop.due
+                who = "You" if mine else reply.author
+                fields["detail"] = f"{who} said: \"{_clip(reply.text, 120)}\""
+                loop.promised_at, loop.due = reply.ts, fields["due"]
+            store.update_loop(loop.id, **fields)
+            loop.updated_at, loop.refs = reply.ts, fields["refs"]
     return closed
+
+
+def candidates(messages: list[Message], loops: list[Loop]) -> list[Message]:
+    """Messages that look like new loops by rule: a request to you, or one you sent, with no reply yet.
+
+    The model decides which are real (rules can't tell "can you believe this?" from a real ask), but
+    giving it the list means a request buried in a busy channel isn't missed.
+    """
+    covered_refs = {r for lp in loops for r in lp.refs}
+    covered_threads = {k for lp in loops if lp.status == "open" for k in lp.threads}
+    replied: dict[str, list[Message]] = {}
+    for m in messages:
+        if key := conversation_key(m):
+            replied.setdefault(key, []).append(m)
+    out = []
+    for m in messages:
+        if m.is_automated or m.intent not in ("request", "question") or m.ref in covered_refs:
+            continue
+        if not (m.is_to_me or m.is_from_me):
+            continue
+        key = conversation_key(m)
+        if key in covered_threads:
+            continue
+        # Answered already? Someone on the other side wrote after it in the same conversation.
+        if key and any(r.ts > m.ts and r.is_from_me != m.is_from_me for r in replied.get(key, [])):
+            continue
+        if m.intent == "question" and not m.is_to_me:
+            continue  # your own questions are rarely commitments; requests you send are
+        out.append(m)
+    return out
+
+
+def _clip(text: str, n: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[: n - 1] + "…"
 
 
 def expire(store: Store, loops: list[Loop], now: datetime, stale_days: int = STALE_DAYS) -> list[Loop]:
@@ -185,6 +249,8 @@ def render_carried(loops: list[Loop], tz: tzinfo, now: datetime) -> str:
         days = (now - lp.opened_at).days
         age = "since today" if days == 0 else f"open {days}d (since {lp.opened_at.astimezone(tz):%a %d %b})"
         due = f" · due {lp.due}" if lp.due else ""
+        if lp.promised_at:
+            due = f" · promised{due}"
         evidence = ", ".join(lp.refs[-EVIDENCE_SHOWN:])
         lines.append(f"[{lp.ref}] {who} · {age}{due} · {lp.title}: {lp.detail} (from {evidence})")
     return "\n".join(lines)
@@ -199,6 +265,7 @@ def apply(
     carried: list[Loop],
     window: dict[str, Message],
     digest_id: int | None,
+    shown_candidates: list[str] = (),
 ) -> LoopReport:
     """Write the model's loop changes, with the same rule as the briefing: no evidence, no change.
 
@@ -206,6 +273,7 @@ def apply(
     loops' old evidence doesn't count, so the model can't "resolve" something by re-citing Monday.
     """
     report = LoopReport(carried=len(carried))
+    opened_refs: set[str] = set()
     by_id = {lp.ref: lp for lp in carried}
 
     for upd in output.get("loops_updated") or []:
@@ -239,6 +307,8 @@ def apply(
             report.rejected.append(f"opened loop {new.get('title', '')!r}: bad kind or no valid citation")
             continue
         due = new.get("due") if _parse_due(new.get("due")) else None
+        # The model often leaves the date out; the message's own deadline hint fills it in.
+        due = due or next((window[r].due_hint for r in refs if window[r].due_hint), None)
         ts = sorted(window[r].ts for r in refs)
         threads = _threads([], refs, window)
         # The same commitment seen again (refresh twice a day, or the model missed it was carried): merge.
@@ -255,13 +325,18 @@ def apply(
                 due=due or twin.due,
                 updated_at=max(ts[-1], twin.updated_at),
             )
+            opened_refs.update(refs)
             report.merged += 1
             continue
         loop_id = store.add_loop(kind, new.get("who", "").strip() or "someone", new["title"].strip(),
                                  new.get("detail", "").strip(), due, refs, threads, ts[0], digest_id)
         store.update_loop(loop_id, updated_at=ts[-1])
         open_now.append(store.get_loop(loop_id))
+        opened_refs.update(refs)
         report.opened += 1
+
+    report.candidates = len(shown_candidates)
+    report.candidates_opened = len(set(shown_candidates) & opened_refs)
 
     return report
 

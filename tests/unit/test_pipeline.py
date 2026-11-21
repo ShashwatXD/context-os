@@ -78,7 +78,7 @@ def test_digest_single_call(store, cfg):
 
     assert [c["kind"] for c in llm.calls] == ["json"]
     prompt = llm.calls[0]["prompt"]
-    assert f"[{msgs[0].ref}]" in prompt and "(to you)" in prompt
+    assert f"[{msgs[0].ref}]" in prompt and "(to you, request)" in prompt
     assert "untrusted" in llm.calls[0]["system"]
     assert d.dropped_refs == ["m999"]
     assert d.output["needs_you"][0]["refs"] == [msgs[0].ref]

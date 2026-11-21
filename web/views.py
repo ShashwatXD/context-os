@@ -160,6 +160,7 @@ class LoopView:
     status: str
     closed_reason: str | None = None
     overdue: bool = False
+    promised: bool = False
 
 
 def loops_view(store: Store, tz: tzinfo, now: datetime) -> dict:
@@ -170,7 +171,8 @@ def loops_view(store: Store, tz: tzinfo, now: datetime) -> dict:
         age = "today" if days == 0 else ("yesterday" if days == 1 else f"{days} days")
         overdue = bool(lp.due) and lp.due < now.astimezone(tz).strftime("%Y-%m-%d")
         return LoopView(lp.id, lp.kind, lp.who, lp.title, lp.detail, lp.due, age,
-                        sources_for(lp.refs[-3:], store.by_refs(lp.refs[-3:]), tz), lp.status, lp.closed_reason, overdue)
+                        sources_for(lp.refs[-3:], store.by_refs(lp.refs[-3:]), tz), lp.status, lp.closed_reason, overdue,
+                        bool(lp.promised_at))
 
     open_ = store.loops("open")
     open_.sort(key=lambda lp: (lp.due is None, lp.due or "", lp.kind != "you_owe", lp.opened_at))

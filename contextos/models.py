@@ -21,6 +21,8 @@ class Message:
     is_from_me: bool = False
     is_automated: bool = False  # bot, newsletter, no-reply, notification
     labels: list[str] = field(default_factory=list)
+    intent: str | None = None  # request | question | commitment | decision | ack | info (pipeline/intent.py)
+    due_hint: str | None = None  # deadline mentioned in the text, YYYY-MM-DD
     rid: int | None = None  # short numeric id assigned by the store; used as citation [m<rid>]
 
     @property

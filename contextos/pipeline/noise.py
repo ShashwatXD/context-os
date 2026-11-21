@@ -4,7 +4,8 @@ Three buckets:
   keep    full text goes into the context
   low     one-line headline only (newsletters, bots, notifications). The model still sees
           they exist, so a GitHub review request or a bank alert isn't silently lost.
-  dropped never sent (promotions, social notifications, muted channels, empty messages)
+  dropped never sent (promotions, social notifications, muted channels, empty messages, and
+          acks like "thanks" / "👍" in conversations you're not part of)
 
 Filtering in code first is the cheapest context-engineering lever there is: every token
 you don't send is cost, latency and distraction you don't pay for.
@@ -42,6 +43,8 @@ def triage(messages: list[Message], mute: list[str] | None = None) -> Triage:
             t.dropped["muted"] += 1
         elif not m.text.strip() and not m.title:
             t.dropped["empty"] += 1
+        elif m.intent == "ack" and not (m.is_to_me or m.is_from_me or m.channel.startswith("DM")):
+            t.dropped["acks"] += 1
         elif m.is_automated and not m.is_to_me:
             t.low.append(m)
         else:

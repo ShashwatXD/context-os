@@ -148,6 +148,9 @@ def make_digest(
     window_label = f"{start.astimezone(tz):%A %d %b, %H:%M} to {end.astimezone(tz):%H:%M} ({tz})"
     memory = loopmem.render_carried(carried, tz, end)
     memory_block = f"<open_loops>\n{memory or '(none)'}\n</open_loops>\n\n"
+    maybe = [m.ref for m in loopmem.candidates(t.keep, store.loops("open"))]
+    if maybe:
+        memory_block += f"<loop_candidates>{', '.join(maybe)}</loop_candidates>\n\n"
     prompt = (
         f"Time window: {window_label}\n"
         f"{len(t.keep)} messages in full, {len(t.low)} automated headlines, {len(carried)} open loops carried.\n\n"
@@ -171,7 +174,7 @@ def make_digest(
 
     # Memory, step 2: apply what the model saw change (evidence required), then re-run the code check
     # so a loop the model opened this morning closes if you already answered it this afternoon.
-    report = loopmem.apply(store, output, carried, window, result.digest_id)
+    report = loopmem.apply(store, output, carried, window, result.digest_id, maybe)
     report.auto_closed = len(auto_closed) + len(loopmem.auto_close(store, store.loops("open"), msgs))
     report.stale, report.not_carried = len(stale), not_carried
     report.carried_tokens = estimate_tokens(memory) if memory else 0

@@ -5,7 +5,7 @@
     </h3>
     {% if lp.status == 'open' %}
       <p>{{ lp.detail }}</p>
-      <p class="muted small">{{ 'You owe' if lp.kind == 'you_owe' else 'Waiting on' }} {{ lp.who }} · open {{ lp.age }}</p>
+      <p class="muted small">{{ 'You owe' if lp.kind == 'you_owe' else 'Waiting on' }} {{ lp.who }} · open {{ lp.age }}{% if lp.promised %} · {{ 'you promised' if lp.kind == 'you_owe' else 'they promised' }}{% endif %}</p>
     {% else %}
       <p class="muted small">{{ lp.who }} · {{ 'went quiet, forgotten' if lp.status == 'stale' else lp.closed_reason }}</p>
     {% endif %}

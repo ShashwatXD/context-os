@@ -106,7 +106,8 @@ def test_news_updates_a_loop_and_duplicates_merge(store, cfg):
 
 def test_loop_opened_and_answered_the_same_day_closes(store, cfg):
     m = ask_from_priya(ts=MON)
-    reply = ask_from_priya(2, ts=MON + timedelta(minutes=30), author="Sam", is_from_me=True, is_to_me=False, text="ok")
+    reply = ask_from_priya(2, ts=MON + timedelta(minutes=30), author="Sam", is_from_me=True, is_to_me=False,
+                           text="Approved, it's in the system now.")
     store.upsert([m, reply])
     d = open_invoice_loop(store, cfg, m)
     assert d.loops.opened == 1 and d.loops.auto_closed == 1 and not store.loops("open")
@@ -150,3 +151,54 @@ def test_public_channel_without_thread_has_no_reply_key():
     assert loopmem.conversation_key(msg(1, channel="#eng")) is None
     assert loopmem.conversation_key(msg(1, channel="DM: Priya")) == "slack:c:DM: Priya"
     assert loopmem.conversation_key(msg(1, thread_id="123")) == "slack:t:123"
+
+
+def test_a_promise_is_not_an_answer(store, cfg):
+    m = ask_from_priya()
+    store.upsert([m])
+    open_invoice_loop(store, cfg, m)
+
+    promise = ask_from_priya(2, ts=TUE - timedelta(hours=5), author="Sam", is_from_me=True, is_to_me=False,
+                             text="I'll look at it tomorrow")
+    store.upsert([promise])
+    d, llm = day(store, cfg, TUE, briefing())
+    [lp] = store.loops("open")  # still open
+    assert d.loops.auto_closed == 0
+    assert lp.promised_at == promise.ts and lp.due == "2026-11-07"  # "tomorrow", from the reply sent on the 6th
+    assert "promised · due 2026-11-07" in llm.calls[0]["prompt"]
+
+    # Next day the actual answer lands in the thread: now it closes.
+    done = ask_from_priya(3, ts=WED - timedelta(hours=2), author="Sam", is_from_me=True, is_to_me=False,
+                          text="Approved and sent to finance.")
+    store.upsert([done])
+    d, _ = day(store, cfg, WED, briefing())
+    assert d.loops.auto_closed == 1 and store.get_loop(lp.id).closed_ref == done.ref
+
+
+def test_waiting_on_closes_when_they_deliver_in_the_thread(store, cfg):
+    ask = msg(1, ts=MON, author="Sam", is_from_me=True, thread_id="t9", text="Bob, can you send the deck by Friday?")
+    store.upsert([ask])
+    day(store, cfg, MON + timedelta(hours=1), briefing(loops_opened=[
+        {"kind": "owed_to_you", "who": "Bob", "title": "Deck from Bob", "detail": "", "due": "", "refs": [ask.ref]}]))
+    [lp] = store.loops("open")
+    assert lp.due == "2026-11-06"  # filled from the message's own "by Friday" when the model left it empty
+
+    store.upsert([msg(2, ts=TUE - timedelta(hours=4), author="Bob", thread_id="t9", text="sure, will do")])
+    day(store, cfg, TUE, briefing())
+    assert store.get_loop(lp.id).status == "open" and store.get_loop(lp.id).promised_at
+
+    store.upsert([msg(3, ts=WED - timedelta(hours=4), author="Bob", thread_id="t9", text="here it is: deck_v3.pdf")])
+    d, _ = day(store, cfg, WED, briefing())
+    assert store.get_loop(lp.id).closed_reason == "Bob replied"
+
+
+def test_rule_candidates_are_offered_to_the_model(store, cfg):
+    buried = msg(1, ts=MON, channel="#eng", is_to_me=True, text="@sam could you check the staging config?")
+    chatter = msg(2, ts=MON + timedelta(minutes=1), channel="#eng", text="lunch was great")
+    answered = msg(3, ts=MON, channel="DM: Ann", author="Ann", is_to_me=True, text="can you call me?")
+    reply = msg(4, ts=MON + timedelta(minutes=5), channel="DM: Ann", author="Sam", is_from_me=True, text="calling now")
+    store.upsert([buried, chatter, answered, reply])
+    d, llm = day(store, cfg, MON + timedelta(hours=1), briefing(loops_opened=[
+        {"kind": "you_owe", "who": "Alice", "title": "Check staging config", "detail": "", "due": "", "refs": [buried.ref]}]))
+    assert f"<loop_candidates>{buried.ref}</loop_candidates>" in llm.calls[0]["prompt"]
+    assert d.loops.candidates == 1 and d.loops.candidates_opened == 1

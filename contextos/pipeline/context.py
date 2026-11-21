@@ -25,6 +25,7 @@ EMAIL_BODY_CHARS = 1500
 CHAT_TEXT_CHARS = 800
 LOW_LINE_CHARS = 140
 MAX_LOW_LINES = 80
+HINTED_INTENTS = ("request", "question", "commitment", "decision")  # ack/info add nothing worth the tokens
 
 
 def estimate_tokens(text: str) -> int:
@@ -57,6 +58,10 @@ def _markers(m: Message) -> str:
         tags.append("to you")
     if m.is_automated:
         tags.append("automated")
+    if m.intent in HINTED_INTENTS:
+        tags.append(m.intent)
+    if m.due_hint:
+        tags.append(f"due {m.due_hint}")
     return f" ({', '.join(tags)})" if tags else ""
 
 

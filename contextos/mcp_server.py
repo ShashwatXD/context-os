@@ -137,6 +137,8 @@ def create_server(config_loader=load_config, llm_factory=None) -> MCPServer:
                 lines.append(f"\n{title} ({len(group)})")
                 for lp in group:
                     due = f", due {lp.due}" if lp.due else ""
+                    if lp.promised_at:
+                        due += ", promised"
                     links = ", ".join(f"[{r}]({msgs[r].url})" for r in lp.refs if r in msgs and msgs[r].url)
                     lines.append(f"- {lp.who}: {lp.title}. {lp.detail} (open {(now - lp.opened_at).days}d{due}) {links}".rstrip())
             return "\n".join(lines).strip()

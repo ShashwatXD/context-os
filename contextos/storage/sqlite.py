@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS messages (
     is_to_me     INTEGER NOT NULL DEFAULT 0,
     is_from_me   INTEGER NOT NULL DEFAULT 0,
     is_automated INTEGER NOT NULL DEFAULT 0,
-    labels       TEXT NOT NULL DEFAULT '[]'
+    labels       TEXT NOT NULL DEFAULT '[]',
+    intent       TEXT,
+    due_hint     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
@@ -111,7 +113,8 @@ CREATE TABLE IF NOT EXISTS loops (
     closed_at     REAL,
     closed_reason TEXT,
     closed_ref    TEXT,
-    digest_id     INTEGER
+    digest_id     INTEGER,
+    promised_at   REAL                        -- someone said "I'll do it": still open, but in motion
 );
 CREATE INDEX IF NOT EXISTS idx_loops_status ON loops(status);
 
@@ -125,7 +128,12 @@ CREATE TABLE IF NOT EXISTS asks (
 );
 """
 
-_COLUMNS = "id, source, channel, author, ts, text, title, thread_id, url, is_to_me, is_from_me, is_automated, labels"
+_COLUMNS = (
+    "id, source, channel, author, ts, text, title, thread_id, url, is_to_me, is_from_me, is_automated, labels, intent, due_hint"
+)
+_NCOLS = _COLUMNS.count(",") + 1
+# Columns added after the first release: (table, column, type). Older databases get them on open.
+_MIGRATIONS = [("messages", "intent", "TEXT"), ("messages", "due_hint", "TEXT"), ("loops", "promised_at", "REAL")]
 
 
 def _now() -> float:
@@ -182,6 +190,7 @@ class Loop:
     closed_reason: str | None = None
     closed_ref: str | None = None
     digest_id: int | None = None
+    promised_at: datetime | None = None
 
     @property
     def ref(self) -> str:
@@ -194,7 +203,30 @@ class Store:
         self.db.row_factory = sqlite3.Row
         # WAL lets the website read while a background sync writes.
         self.db.execute("PRAGMA journal_mode=WAL")
+        self._migrate()
         self.db.executescript(SCHEMA)
+        self._backfill_intents()
+
+    def _migrate(self) -> None:
+        for table, column, kind in _MIGRATIONS:
+            cols = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            if cols and column not in cols:  # table exists, column doesn't
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+        self.db.commit()
+
+    def _backfill_intents(self) -> None:
+        """Tag messages stored before intents existed. Rules only, so it's fast even for a big inbox."""
+        from contextos.pipeline.intent import tag
+
+        rows = self.db.execute("SELECT * FROM messages WHERE intent IS NULL").fetchall()
+        if not rows:
+            return
+        with self.db:
+            for r in rows:
+                m = tag(self._to_message(r))
+                self.db.execute("UPDATE messages SET intent = ?, due_hint = ? WHERE rid = ?", (m.intent, m.due_hint, m.rid))
+            # Acks are never embedded; drop any vectors made before we knew.
+            self.db.execute("DELETE FROM embeddings WHERE rid IN (SELECT rid FROM messages WHERE intent = 'ack')")
 
     def close(self) -> None:
         self.db.close()
@@ -202,10 +234,13 @@ class Store:
     # ---- messages -----------------------------------------------------------
 
     def upsert(self, messages: list[Message]) -> int:
-        """Insert or update messages. Returns how many were new. Sets .rid on each message."""
+        """Insert or update messages. Returns how many were new. Sets .rid, .intent and .due_hint on each message."""
+        from contextos.pipeline.intent import tag
+
         new = 0
         with self.db:
             for m in messages:
+                tag(m)
                 row = self.db.execute("SELECT rid, text, title FROM messages WHERE id = ?", (m.id,)).fetchone()
                 values = (
                     m.id,
@@ -221,9 +256,11 @@ class Store:
                     int(m.is_from_me),
                     int(m.is_automated),
                     json.dumps(m.labels),
+                    m.intent,
+                    m.due_hint,
                 )
                 if row is None:
-                    cur = self.db.execute(f"INSERT INTO messages ({_COLUMNS}) VALUES ({','.join('?' * 13)})", values)
+                    cur = self.db.execute(f"INSERT INTO messages ({_COLUMNS}) VALUES ({','.join('?' * _NCOLS)})", values)
                     m.rid = cur.lastrowid
                     new += 1
                 else:
@@ -231,7 +268,7 @@ class Store:
                     if (row["text"], row["title"]) != (m.text, m.title):
                         self.db.execute("DELETE FROM embeddings WHERE rid = ?", (m.rid,))  # re-embed edited text
                     self.db.execute(
-                        f"UPDATE messages SET ({_COLUMNS}) = ({','.join('?' * 13)}) WHERE rid = ?",
+                        f"UPDATE messages SET ({_COLUMNS}) = ({','.join('?' * _NCOLS)}) WHERE rid = ?",
                         (*values, m.rid),
                     )
                     self.db.execute("DELETE FROM messages_fts WHERE rid = ?", (m.rid,))
@@ -330,7 +367,8 @@ class Store:
     def missing_embeddings(self, model: str, limit: int = 100) -> list[Message]:
         rows = self.db.execute(
             "SELECT m.* FROM messages m LEFT JOIN embeddings e ON e.rid = m.rid AND e.model = ? "
-            "WHERE e.rid IS NULL ORDER BY m.ts DESC LIMIT ?",
+            "WHERE e.rid IS NULL AND COALESCE(m.intent, '') != 'ack' "
+            "ORDER BY m.ts DESC LIMIT ?",
             (model, limit),
         ).fetchall()
         return [self._to_message(r) for r in rows]
@@ -588,7 +626,7 @@ class Store:
         return Loop(
             r["id"], r["kind"], r["who"], r["title"], r["detail"], r["due"], r["status"],
             json.loads(r["refs"]), json.loads(r["threads"]), _dt(r["opened_at"]), _dt(r["updated_at"]),
-            _dt(r["closed_at"]), r["closed_reason"], r["closed_ref"], r["digest_id"],
+            _dt(r["closed_at"]), r["closed_reason"], r["closed_ref"], r["digest_id"], _dt(r["promised_at"]),
         )
 
     @staticmethod
@@ -607,5 +645,7 @@ class Store:
             is_from_me=bool(r["is_from_me"]),
             is_automated=bool(r["is_automated"]),
             labels=json.loads(r["labels"]),
+            intent=r["intent"],
+            due_hint=r["due_hint"],
             rid=r["rid"],
         )
