@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 
 from contextos.config import Config, load_config
 from contextos.llm import LLM, LLMError
+from contextos.observability import audit
 from contextos.pipeline.ask import Tools
 from contextos.pipeline.digest import SECTIONS
 from contextos.pipeline.search import Searcher
@@ -48,7 +49,7 @@ def create_server(config_loader=load_config, llm_factory=None) -> MCPServer:
                 embedder = lambda text: llm.embed([text], model=cfg.embed_model, task="RETRIEVAL_QUERY", dim=cfg.embed_dim)[0]  # noqa: E731
             except LLMError:
                 embedder = None  # keyword search still works
-        return Tools(store, local_tz(), Searcher(store, embedder, cfg.embed_model)), store
+        return Tools(store, local_tz(), Searcher(store, embedder, cfg.embed_model), actor="mcp"), store
 
     def run(name: str, args: dict) -> str:
         tools, store = open_tools()
@@ -108,6 +109,7 @@ def create_server(config_loader=load_config, llm_factory=None) -> MCPServer:
                 return "No briefing written yet for this window. Open ContextOS and press Refresh, or wait for the morning briefing."
             refs = [r for s in SECTIONS for it in rec.output.get(s, []) for r in it.get("refs", [])]
             msgs = store.by_refs(refs)
+            audit(store, "mcp", "latest_briefing", {"window": window}, list(msgs), [], True, 0)
             age = int((datetime.now(UTC) - rec.created_at).total_seconds() // 60)
             lines = [f"Briefing written {age} min ago. {rec.output.get('headline', '')}"]
             for s, title in (("needs_you", "NEEDS YOU"), ("important", "IMPORTANT"), ("fyi", "FYI")):
@@ -131,9 +133,10 @@ def create_server(config_loader=load_config, llm_factory=None) -> MCPServer:
         store = Store(cfg.db_path)
         try:
             loops = store.loops("open")
+            msgs = store.by_refs([r for lp in loops for r in lp.refs])
+            audit(store, "mcp", "open_loops", {}, list(msgs), [], True, 0)
             if not loops:
                 return "No open loops."
-            msgs = store.by_refs([r for lp in loops for r in lp.refs])
             now = datetime.now(UTC)
             lines = []
             for kind, title in (("you_owe", "USER OWES"), ("owed_to_you", "USER IS WAITING ON")):

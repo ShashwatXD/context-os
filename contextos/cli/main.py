@@ -6,6 +6,8 @@ contextos sync              pull new messages from every configured source
 contextos today             sync, then print today's briefing
 contextos ask "question"    search my messages and answer
 contextos people            who is the same person across apps (merge / split by hand)
+contextos trace [id]        timings, tokens and cost of recent runs
+contextos audit             tool calls agents made, and anything the guard flagged
 contextos status            what's configured and stored
 """
 
@@ -155,6 +157,56 @@ def cmd_people(args, cfg, store):
         console.print(f"[bold]{p['name']}[/bold]  [dim]{aliases}[/dim]")
 
 
+def cmd_trace(args, cfg, store):
+    """Recent runs, or one run's steps as a waterfall."""
+    from contextos import observability as obs
+
+    tz = _local_tz()
+    if args.run is None:
+        rows = obs.runs(store, args.limit)
+        if not rows:
+            console.print("No traced runs yet. Write a briefing or ask a question first.")
+            return
+        for r in rows:
+            when = datetime.fromtimestamp(r["started_at"], tz).strftime("%d %b %H:%M")
+            cost = f"${r['cost_usd']:.4f}" if r["cost_usd"] is not None else "cost ?"
+            ms = f"{r['ms'] / 1000:.1f}s" if r["ms"] else "-"
+            color = {"ok": "green", "error": "red"}.get(r["status"], "yellow")
+            console.print(f"#{r['id']:<4} {when}  {r['name']:9} [{color}]{r['status']:7}[/{color}] {ms:>7}  "
+                          f"{r['tokens_in']:>7,} in {r['tokens_out']:>6,} out  {cost}")
+        console.print("[dim]contextos trace <id> shows one run's steps[/dim]")
+        return
+    spans = obs.spans(store, args.run)
+    if not spans:
+        console.print(f"No run #{args.run}.")
+        return
+    total = max(s["start_ms"] + s["ms"] for s in spans) or 1
+    width = 30
+    for s in spans:
+        lead = int(width * s["start_ms"] / total)
+        bar = "█" * max(1, int(width * s["ms"] / total))
+        attrs = ", ".join(f"{k}={v}" for k, v in s["attrs"].items() if k != "args")
+        err = f" [red]{s['error']}[/red]" if s["error"] else ""
+        console.print(f"{s['name']:16} {' ' * lead}{bar:<{width - lead}} {s['ms']:>8.1f} ms  [dim]{attrs}[/dim]{err}")
+
+
+def cmd_audit(args, cfg, store):
+    """Every tool call agents made through ContextOS: who, what, how many messages, anything flagged."""
+    from contextos import observability as obs
+
+    rows = obs.audit_rows(store, args.limit)
+    if not rows:
+        console.print("No tool calls recorded yet.")
+        return
+    tz = _local_tz()
+    for r in reversed(rows):
+        when = datetime.fromtimestamp(r["at"], tz).strftime("%d %b %H:%M:%S")
+        args_s = json.dumps(r["args"], ensure_ascii=False)[:70]
+        flag = f"  [red]flagged: {', '.join(r['flagged'])}[/red]" if r["flagged"] else ""
+        ok = "" if r["ok"] else "  [red]error[/red]"
+        console.print(f"{when}  {r['actor']:4} {r['tool']:16} {args_s:<70} {len(r['refs']):>3} msgs{flag}{ok}")
+
+
 def cmd_mcp(args, cfg, store):
     """Serve ContextOS over MCP stdio. Nothing may be printed to stdout here: it carries the protocol."""
     from contextos.mcp_server import main as serve
@@ -242,6 +294,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("names", nargs="*")
     p.add_argument("--all", action="store_true", help="also show people seen in only one app")
     p.set_defaults(fn=cmd_people)
+
+    p = sub.add_parser("trace", help="timings, tokens and cost of recent briefings and asks")
+    p.add_argument("run", nargs="?", type=int, help="run id to show step by step")
+    p.add_argument("--limit", type=int, default=15)
+    p.set_defaults(fn=cmd_trace)
+
+    p = sub.add_parser("audit", help="every tool call AI agents made through ContextOS")
+    p.add_argument("--limit", type=int, default=50)
+    p.set_defaults(fn=cmd_audit)
 
     p = sub.add_parser("status", help="show configuration and stored data")
     p.set_defaults(fn=cmd_status)

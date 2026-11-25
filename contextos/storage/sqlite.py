@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS messages (
     labels       TEXT NOT NULL DEFAULT '[]',
     intent       TEXT,
     due_hint     TEXT,
-    author_id    TEXT
+    author_id    TEXT,
+    risk         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
@@ -153,7 +154,7 @@ CREATE TABLE IF NOT EXISTS asks (
 
 _COLUMNS = (
     "id, source, channel, author, ts, text, title, thread_id, url, is_to_me, is_from_me, is_automated, labels, intent, "
-    "due_hint, author_id"
+    "due_hint, author_id, risk"
 )
 _NCOLS = _COLUMNS.count(",") + 1
 # Columns added after the first release: (table, column, type). Older databases get them on open.
@@ -162,6 +163,7 @@ _MIGRATIONS = [
     ("messages", "due_hint", "TEXT"),
     ("loops", "promised_at", "REAL"),
     ("messages", "author_id", "TEXT"),
+    ("messages", "risk", "TEXT"),
 ]
 
 
@@ -233,8 +235,11 @@ class Store:
         # WAL lets the website read while a background sync writes.
         self.db.execute("PRAGMA journal_mode=WAL")
         self._migrate()
-        self.db.executescript(SCHEMA)
+        from contextos.observability import SCHEMA as OBSERVABILITY_SCHEMA
+
+        self.db.executescript(SCHEMA + OBSERVABILITY_SCHEMA)
         self._backfill_intents()
+        self._backfill_risk()
         if not self.db.execute("SELECT 1 FROM identity_aliases LIMIT 1").fetchone() and \
                 self.db.execute("SELECT 1 FROM messages LIMIT 1").fetchone():
             self.rebuild_identities()  # databases from before identities existed
@@ -260,6 +265,17 @@ class Store:
             # Acks are never embedded; drop any vectors made before we knew.
             self.db.execute("DELETE FROM embeddings WHERE rid IN (SELECT rid FROM messages WHERE intent = 'ack')")
 
+    def _backfill_risk(self) -> None:
+        """Run the untrusted-text guard over messages stored before it existed."""
+        from contextos.pipeline.guard import tag
+
+        rows = self.db.execute("SELECT * FROM messages WHERE risk IS NULL").fetchall()
+        if not rows:
+            return
+        with self.db:
+            for r in rows:
+                self.db.execute("UPDATE messages SET risk = ? WHERE rid = ?", (tag(self._to_message(r)).risk, r["rid"]))
+
     def close(self) -> None:
         self.db.close()
 
@@ -267,12 +283,15 @@ class Store:
 
     def upsert(self, messages: list[Message]) -> int:
         """Insert or update messages. Returns how many were new. Sets .rid, .intent and .due_hint on each message."""
+        from contextos.pipeline import guard
         from contextos.pipeline.intent import tag
 
         new = 0
         with self.db:
             for m in messages:
                 tag(m)
+                m.risk = None  # always re-check: the text may have been edited
+                guard.tag(m)
                 row = self.db.execute("SELECT rid, text, title FROM messages WHERE id = ?", (m.id,)).fetchone()
                 values = (
                     m.id,
@@ -291,6 +310,7 @@ class Store:
                     m.intent,
                     m.due_hint,
                     m.author_id,
+                    m.risk,
                 )
                 if row is None:
                     cur = self.db.execute(f"INSERT INTO messages ({_COLUMNS}) VALUES ({','.join('?' * _NCOLS)})", values)
@@ -757,5 +777,6 @@ class Store:
             intent=r["intent"],
             due_hint=r["due_hint"],
             author_id=r["author_id"],
+            risk=r["risk"],
             rid=r["rid"],
         )

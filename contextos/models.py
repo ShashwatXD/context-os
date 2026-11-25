@@ -23,6 +23,7 @@ class Message:
     labels: list[str] = field(default_factory=list)
     intent: str | None = None  # request | question | commitment | decision | ack | info (pipeline/intent.py)
     due_hint: str | None = None  # deadline mentioned in the text, YYYY-MM-DD
+    risk: str | None = None  # guard patterns matched ("override,exfiltration"); "" = clean, None = not checked yet
     author_id: str | None = None  # stable account id: "gmail:priya@acme.com", "slack:U123", "discord:9876"
     rid: int | None = None  # short numeric id assigned by the store; used as citation [m<rid>]
 

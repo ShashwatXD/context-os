@@ -11,6 +11,7 @@ from datetime import datetime, tzinfo
 from contextos.config import Config
 from contextos.llm import LLM
 from contextos.models import Message
+from contextos.observability import Tracer, snapshot, usage_delta
 from contextos.pipeline import loops as loopmem
 from contextos.pipeline.context import build_blocks, estimate_tokens, pack
 from contextos.pipeline.noise import Triage, triage
@@ -92,6 +93,7 @@ class DigestResult:
     dropped_refs: list[str] = field(default_factory=list)
     digest_id: int | None = None
     loops: loopmem.LoopReport = field(default_factory=loopmem.LoopReport)
+    trace_id: int | None = None
 
     @property
     def empty(self) -> bool:
@@ -107,15 +109,36 @@ def make_digest(
     tz: tzinfo,
     progress: Callable[[str], None] = lambda _: None,
 ) -> DigestResult:
-    msgs = store.between(start, end)
+    """Write a briefing for [start, end). Every run is traced: steps, timings, tokens and cost (`contextos trace`)."""
+    tracer = Tracer(store, "briefing", window=f"{start.isoformat()} → {end.isoformat()}")
+    before = snapshot(llm)
+    try:
+        result = _make_digest(store, llm, cfg, start, end, tz, progress, tracer)
+    except Exception as e:
+        tracer.finish(usage_delta(before, snapshot(llm)), error=f"{type(e).__name__}: {e}"[:300])
+        raise
+    tracer.finish(usage_delta(before, snapshot(llm)), messages=len(result.messages), digest_id=result.digest_id)
+    result.trace_id = tracer.run_id
+    return result
+
+
+def _make_digest(store, llm, cfg, start, end, tz, progress, tracer: Tracer) -> DigestResult:
+    with tracer.span("load") as s:
+        msgs = store.between(start, end)
+        s.attrs["messages"] = len(msgs)
 
     # Memory, step 1, all in code: close what you already answered, forget what went quiet.
-    open_loops = store.loops("open")
-    auto_closed = loopmem.auto_close(store, open_loops, msgs)
-    stale = loopmem.expire(store, open_loops, end)
-    carried, not_carried = loopmem.select_carried(open_loops)
+    with tracer.span("loops.code") as s:
+        open_loops = store.loops("open")
+        auto_closed = loopmem.auto_close(store, open_loops, msgs)
+        stale = loopmem.expire(store, open_loops, end)
+        carried, not_carried = loopmem.select_carried(open_loops)
+        s.attrs.update(open=len(open_loops), auto_closed=len(auto_closed), stale=len(stale), carried=len(carried))
 
-    t = triage(msgs, cfg.mute)
+    with tracer.span("triage") as s:
+        t = triage(msgs, cfg.mute)
+        s.attrs.update(keep=len(t.keep), low=len(t.low), dropped=sum(t.dropped.values()),
+                       flagged=sum(1 for m in t.keep + t.low if m.risk and not m.is_from_me))
     window = {m.ref: m for m in t.keep + t.low}
     if not window:
         report = loopmem.LoopReport(auto_closed=len(auto_closed), stale=len(stale))
@@ -125,9 +148,11 @@ def make_digest(
     by_ref = {**store.by_refs([r for lp in carried for r in lp.refs]), **window}
 
     progress(f"Read {len(msgs)} messages: {len(t.keep)} worth reading, {len(t.low)} automated, {sum(t.dropped.values())} skipped")
-    blocks = build_blocks(t, tz)
-    full_context = "\n\n".join(b.render() for b in blocks)
-    tokens = estimate_tokens(full_context)
+    with tracer.span("assemble") as s:
+        blocks = build_blocks(t, tz)
+        full_context = "\n\n".join(b.render() for b in blocks)
+        tokens = estimate_tokens(full_context)
+        s.attrs.update(blocks=len(blocks), est_tokens=tokens, budget=cfg.token_budget)
 
     if tokens <= cfg.token_budget:
         context, n_chunks = full_context, 1
@@ -140,7 +165,7 @@ def make_digest(
         def condense(chunk: str) -> str:
             return llm.text(model=cfg.worker_model, system=MAP_SYSTEM, prompt=f"<messages>\n{chunk}\n</messages>", max_tokens=8192)
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with tracer.span("llm.condense", model=cfg.worker_model, chunks=n_chunks), ThreadPoolExecutor(max_workers=4) as pool:
             notes = list(pool.map(condense, chunks))
         context = "\n\n".join(f"## Notes, part {i + 1} of {n_chunks}\n{n}" for i, n in enumerate(notes))
 
@@ -157,9 +182,12 @@ def make_digest(
         f"{memory_block}"
         f"<messages>\n{context}\n</messages>"
     )
-    output = llm.json(model=cfg.main_model, system=digest_system(cfg), prompt=prompt, schema=DIGEST_SCHEMA)
+    with tracer.span("llm.brief", model=cfg.main_model, est_prompt_tokens=estimate_tokens(prompt)):
+        output = llm.json(model=cfg.main_model, system=digest_system(cfg), prompt=prompt, schema=DIGEST_SCHEMA)
 
-    dropped = verify_refs(output, set(by_ref))
+    with tracer.span("verify") as s:
+        dropped = verify_refs(output, set(by_ref))
+        s.attrs["invalid_citations"] = len(dropped)
     result = DigestResult((start, end), output, by_ref, t, tokens, n_chunks, dropped)
     result.digest_id = store.save_digest(
         start,
@@ -174,8 +202,11 @@ def make_digest(
 
     # Memory, step 2: apply what the model saw change (evidence required), then re-run the code check
     # so a loop the model opened this morning closes if you already answered it this afternoon.
-    report = loopmem.apply(store, output, carried, window, result.digest_id, maybe)
-    report.auto_closed = len(auto_closed) + len(loopmem.auto_close(store, store.loops("open"), msgs))
+    with tracer.span("loops.apply") as s:
+        report = loopmem.apply(store, output, carried, window, result.digest_id, maybe)
+        report.auto_closed = len(auto_closed) + len(loopmem.auto_close(store, store.loops("open"), msgs))
+        s.attrs.update(opened=report.opened, resolved=report.resolved, rejected=len(report.rejected),
+                       guard_blocked=report.guard_blocked)
     report.stale, report.not_carried = len(stale), not_carried
     report.carried_tokens = estimate_tokens(memory) if memory else 0
     result.loops = report

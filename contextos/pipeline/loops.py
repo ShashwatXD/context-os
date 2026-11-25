@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, tzinfo
 
 from contextos.models import Message
+from contextos.pipeline.guard import is_flagged
 from contextos.storage import Loop, Store
 
 KINDS = ("you_owe", "owed_to_you")
@@ -95,6 +96,7 @@ class LoopReport:
     carried_tokens: int = 0  # what the memory costs in the prompt
     candidates: int = 0  # rule-detected possible loops shown to the model
     candidates_opened: int = 0  # ...of which the model opened (rule precision, as judged by the model)
+    guard_blocked: int = 0  # loop changes refused because their evidence looked like a prompt injection
     rejected: list[str] = field(default_factory=list)  # model output we refused, and why
 
     def as_dict(self) -> dict:
@@ -137,7 +139,7 @@ def auto_close(store: Store, loops: list[Loop], messages: list[Message]) -> list
     by_key: dict[str, list[Message]] = {}
     for m in messages:
         key = conversation_key(m)
-        if key and not m.is_automated:
+        if key and not m.is_automated and not is_flagged(m):  # an injected "done!" must not close a loop
             by_key.setdefault(key, []).append(m)
     closed = []
     for loop in loops:
@@ -184,7 +186,7 @@ def candidates(messages: list[Message], loops: list[Loop]) -> list[Message]:
             replied.setdefault(key, []).append(m)
     out = []
     for m in messages:
-        if m.is_automated or m.intent not in ("request", "question") or m.ref in covered_refs:
+        if m.is_automated or m.intent not in ("request", "question") or m.ref in covered_refs or is_flagged(m):
             continue
         if not (m.is_to_me or m.is_from_me):
             continue
@@ -286,6 +288,10 @@ def apply(
         if not refs:
             report.rejected.append(f"{tag}: no citation from today's messages")
             continue
+        if any(is_flagged(window[r]) for r in refs):
+            report.rejected.append(f"{tag}: evidence contains instructions aimed at an AI (guard)")
+            report.guard_blocked += 1
+            continue
         latest = max(window[r].ts for r in refs)
         if upd.get("status") == "resolved":
             store.close_loop(lp.id, f"resolved: {upd.get('note', '').strip()}"[:300], refs[0], latest)
@@ -305,6 +311,10 @@ def apply(
         kind = new.get("kind")
         if kind not in KINDS or not refs or not str(new.get("title", "")).strip():
             report.rejected.append(f"opened loop {new.get('title', '')!r}: bad kind or no valid citation")
+            continue
+        if any(is_flagged(window[r]) for r in refs):
+            report.rejected.append(f"opened loop {new.get('title', '')!r}: evidence contains instructions aimed at an AI (guard)")
+            report.guard_blocked += 1
             continue
         due = new.get("due") if _parse_due(new.get("due")) else None
         # The model often leaves the date out; the message's own deadline hint fills it in.

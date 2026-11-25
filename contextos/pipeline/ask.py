@@ -9,6 +9,7 @@ tools over your message store and pulls context just-in-time. Same data, differe
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
@@ -16,6 +17,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from contextos.config import Config
 from contextos.llm import LLM
 from contextos.models import Message
+from contextos.observability import Tracer, audit, snapshot, usage_delta
 from contextos.pipeline.context import render_message
 from contextos.pipeline.digest import _about_user
 from contextos.pipeline.search import Searcher, SearchRequest, parse_date
@@ -103,10 +105,11 @@ class AskResult:
 
 
 class Tools:
-    def __init__(self, store: Store, tz: tzinfo, searcher: Searcher | None = None):
+    def __init__(self, store: Store, tz: tzinfo, searcher: Searcher | None = None, actor: str | None = None):
         self.store = store
         self.tz = tz
         self.searcher = searcher or Searcher(store)
+        self.actor = actor  # set → every call is written to the audit log ("ask", "mcp")
         self.seen: dict[str, Message] = {}  # every message the model was actually shown
 
     def _show(self, msgs: list[Message]) -> str:
@@ -137,7 +140,17 @@ class Tools:
         return "\n".join(lines)
 
     def run(self, name: str, args: dict) -> tuple[str, bool]:
-        """Returns (content, is_error). Errors go back to the model so it can recover."""
+        """Returns (content, is_error). Errors go back to the model so it can recover. Audited when actor is set."""
+        before = set(self.seen)
+        t0 = time.perf_counter()
+        content, is_error = self._run(name, args)
+        if self.actor:
+            shown = [r for r in self.seen if r not in before]
+            flagged = [r for r in shown if self.seen[r].risk and not self.seen[r].is_from_me]
+            audit(self.store, self.actor, name, args, shown, flagged, not is_error, (time.perf_counter() - t0) * 1000)
+        return content, is_error
+
+    def _run(self, name: str, args: dict) -> tuple[str, bool]:
         try:
             if name == "search_messages":
                 req = SearchRequest(
@@ -187,27 +200,42 @@ def ask(
     def embed_query(text: str) -> list[float]:
         return llm.embed([text], model=cfg.embed_model, task="RETRIEVAL_QUERY", dim=cfg.embed_dim)[0]
 
-    tools = Tools(store, tz, Searcher(store, embed_query, cfg.embed_model))
+    tools = Tools(store, tz, Searcher(store, embed_query, cfg.embed_model), actor="ask")
     system = ask_system(cfg, datetime.now(UTC), tz)
     history: list = [llm.user_message(question)]
+    tracer = Tracer(store, "ask", question=question[:200])
+    before = snapshot(llm)
 
-    for step in range(1, MAX_STEPS + 1):
-        turn = llm.tool_turn(model=cfg.main_model, system=system, history=history, tools=TOOLS)
-        # Keep the model's turn exactly as returned (it can carry hidden reasoning signatures).
-        history.append(turn.message)
+    def done(answer: str, steps: int) -> AskResult:
+        result = _finish(answer, tools, steps)
+        tracer.finish(usage_delta(before, snapshot(llm)), steps=steps, cited=len(result.cited), unknown_refs=len(result.unknown_refs))
+        return result
 
-        if not turn.calls:
-            return _finish(turn.text, tools, step)
+    try:
+        for step in range(1, MAX_STEPS + 1):
+            with tracer.span("llm.turn", model=cfg.main_model, step=step) as s:
+                turn = llm.tool_turn(model=cfg.main_model, system=system, history=history, tools=TOOLS)
+                s.attrs["tool_calls"] = len(turn.calls)
+            # Keep the model's turn exactly as returned (it can carry hidden reasoning signatures).
+            history.append(turn.message)
 
-        results = []
-        for call in turn.calls:
-            if on_step:
-                on_step(call.name, call.args)
-            content, is_error = tools.run(call.name, call.args)
-            results.append((call, content, is_error))
-        history.append(llm.tool_results(results))  # all results in ONE message
+            if not turn.calls:
+                return done(turn.text, step)
 
-    return _finish(f"(Stopped after {MAX_STEPS} steps without a final answer.)", tools, MAX_STEPS)
+            results = []
+            for call in turn.calls:
+                if on_step:
+                    on_step(call.name, call.args)
+                with tracer.span(f"tool.{call.name}", args=call.args) as s:
+                    content, is_error = tools.run(call.name, call.args)
+                    s.attrs["error"] = is_error
+                results.append((call, content, is_error))
+            history.append(llm.tool_results(results))  # all results in ONE message
+    except Exception as e:
+        tracer.finish(usage_delta(before, snapshot(llm)), error=f"{type(e).__name__}: {e}"[:300])
+        raise
+
+    return done(f"(Stopped after {MAX_STEPS} steps without a final answer.)", MAX_STEPS)
 
 
 def _finish(answer: str, tools: Tools, steps: int) -> AskResult:
