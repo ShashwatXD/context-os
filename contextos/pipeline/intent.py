@@ -53,9 +53,10 @@ _DECISION = re.compile(
     r"approved|agreed|ship it|confirmed for|is confirmed|has been approved|tay hua|final hai)\b",
     re.I,
 )
+# Question words that make a question even without "?" ("kab tak hoga", "any update on X").
+# Auxiliaries (is, will, can...) don't count on their own: "Will share the recording later" is a promise.
 _QUESTION_START = re.compile(
-    r"^\s*(who|what|when|where|why|how|which|is|are|do|does|did|can|could|should|would|will|any update|"
-    r"kya|kab|kaise|kaun|kahan|kyu|kyun|kitna)\b",
+    r"^\s*(who|what|when|where|why|how|which|any update|kya|kab|kaise|kaun|kahan|kyu|kyun|kitna)\b",
     re.I,
 )
 _URL = re.compile(r"https?://\S+")
@@ -102,7 +103,7 @@ _DUE_CONTEXT = re.compile(r"\b(by|before|until|till|due|deadline|on|for|eod|tak|
 def due_hint(m: Message) -> str | None:
     """A deadline mentioned in the message, as YYYY-MM-DD, resolved against when it was sent."""
     text = m.text[:600].lower()
-    if not _DUE_CONTEXT.search(text) and not re.search(r"\b(today|tomorrow|tonight|eod|aaj|kal)\b", text):
+    if not _DUE_CONTEXT.search(text) and not re.search(r"\b(today|tomorrow|tonight|eod|aaj|kal|next week)\b", text):
         return None
     sent: date = m.ts.date()
 

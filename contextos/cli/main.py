@@ -6,6 +6,7 @@ contextos sync              pull new messages from every configured source
 contextos today             sync, then print today's briefing
 contextos ask "question"    search my messages and answer
 contextos people            who is the same person across apps (merge / split by hand)
+contextos eval              offline quality gate for every code-only layer
 contextos trace [id]        timings, tokens and cost of recent runs
 contextos audit             tool calls agents made, and anything the guard flagged
 contextos status            what's configured and stored
@@ -207,6 +208,39 @@ def cmd_audit(args, cfg, store):
         console.print(f"{when}  {r['actor']:4} {r['tool']:16} {args_s:<70} {len(r['refs']):>3} msgs{flag}{ok}")
 
 
+def cmd_eval(args, cfg, store):
+    """Score the code-only layers on hand-labeled cases. Offline, free, and the same check CI runs."""
+    from contextos.evals.run import THRESHOLDS, gate, run
+
+    report = run()
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        rows = [
+            ("Intent tagging", f"macro F1 {report['intent']['macro_f1']:.2f}", f"{report['intent']['cases']} messages"),
+            ("Deadlines", f"accuracy {report['due']['accuracy']:.2f}", f"{report['due']['false_deadlines']} invented"),
+            ("Open-loop detection", f"P {report['loops']['precision']:.2f}  R {report['loops']['recall']:.2f}",
+             f"{report['loops']['cases']} conversations"),
+            ("Identity resolution", f"P {report['identity']['precision']:.2f}  R {report['identity']['recall']:.2f}",
+             f"{report['identity']['aliases']} aliases, {report['identity']['people']} people"),
+            ("Injection guard", f"P {report['guard']['precision']:.2f}  R {report['guard']['recall']:.2f}",
+             f"{report['guard']['cases']} texts"),
+        ]
+        for name, score, size in rows:
+            console.print(f"  {name:20} {score:22} [dim]{size}[/dim]")
+        failures = [(layer, f) for layer in report for f in report[layer]["failures"]]
+        if failures:
+            console.print(f"\n[bold]Known misses ({len(failures)})[/bold]")
+            for layer, f in failures:
+                console.print(f"  [dim]{layer:9}[/dim] {f}")
+    problems = gate(report)
+    if problems:
+        console.print("\n[red]Quality gate failed:[/red]\n  " + "\n  ".join(problems))
+        sys.exit(1)
+    if not args.json:
+        console.print(f"\n[green]Quality gate passed[/green] [dim]({len(THRESHOLDS)} thresholds)[/dim]")
+
+
 def cmd_mcp(args, cfg, store):
     """Serve ContextOS over MCP stdio. Nothing may be printed to stdout here: it carries the protocol."""
     from contextos.mcp_server import main as serve
@@ -261,6 +295,10 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("mcp", help="run as an MCP server so AI agents can use your context (stdio)")
     p.set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser("eval", help="offline quality checks with a pass/fail gate (no API key needed)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_eval)
 
     p = sub.add_parser("bench", help="measure quality on a labeled benchmark inbox")
     p.set_defaults(fn=cmd_bench)

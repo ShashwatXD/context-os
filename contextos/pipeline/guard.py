@@ -26,7 +26,7 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
         r"\b(instructions?|prompts?|rules?|guidelines?|directions?|context)\b", re.I | re.S)),
     ("role", re.compile(
         r"\b(you are now|from now on,? you|act as (an?|the) (ai|assistant|system|admin)|pretend (to be|you are)|"
-        r"new (system )?instructions?:|developer mode|jailbreak)\b", re.I)),
+        r"developer mode|jailbreak)\b|\bnew (system )?instructions?\s*:", re.I)),
     ("fake_turn", re.compile(r"(^|\n)\s*(system|assistant|developer)\s*:|<\s*/?\s*(system|instructions?|assistant)\s*>|\[/?INST\]",
                              re.I)),
     ("ai_address", re.compile(
