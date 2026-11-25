@@ -5,6 +5,7 @@ contextos auth gmail        one-time Google login
 contextos sync              pull new messages from every configured source
 contextos today             sync, then print today's briefing
 contextos ask "question"    search my messages and answer
+contextos people            who is the same person across apps (merge / split by hand)
 contextos status            what's configured and stored
 """
 
@@ -135,6 +136,25 @@ def cmd_status(args, cfg, store):
         console.print(f"  {src.name:8} {state}  {counts.get(src.name, 0)} stored{when}")
 
 
+def cmd_people(args, cfg, store):
+    """List people seen in more than one app, or merge / split two names by hand."""
+    if args.action in ("merge", "split"):
+        if len(args.names) != 2:
+            console.print(f"Usage: contextos people {args.action} \"Name A\" \"Name B\"")
+            sys.exit(1)
+        store.add_identity_override(args.names[0], args.names[1], args.action)
+        console.print(f"[green]{args.action.title()}d[/green] {args.names[0]} and {args.names[1]}.")
+        return
+    store.rebuild_identities()
+    people = store.identities(min_sources=1 if args.all else 2)
+    if not people:
+        console.print("No one found in more than one app yet." if not args.all else "No people stored yet.")
+        return
+    for p in people:
+        aliases = ", ".join(f"{a['source']}: {a['author']}" for a in p["aliases"])
+        console.print(f"[bold]{p['name']}[/bold]  [dim]{aliases}[/dim]")
+
+
 def cmd_mcp(args, cfg, store):
     """Serve ContextOS over MCP stdio. Nothing may be printed to stdout here: it carries the protocol."""
     from contextos.mcp_server import main as serve
@@ -216,6 +236,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("question", nargs="+")
     p.add_argument("--no-sync", action="store_true")
     p.set_defaults(fn=cmd_ask)
+
+    p = sub.add_parser("people", help="people linked across Gmail, Slack and Discord")
+    p.add_argument("action", nargs="?", choices=["list", "merge", "split"], default="list")
+    p.add_argument("names", nargs="*")
+    p.add_argument("--all", action="store_true", help="also show people seen in only one app")
+    p.set_defaults(fn=cmd_people)
 
     p = sub.add_parser("status", help="show configuration and stored data")
     p.set_defaults(fn=cmd_status)

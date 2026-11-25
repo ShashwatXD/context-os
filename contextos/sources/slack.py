@@ -130,6 +130,7 @@ def convert(
         is_to_me=not is_from_me and (is_dm or f"<@{my_id}>" in raw.get("text", "")),
         is_from_me=is_from_me,
         is_automated=bool(raw.get("bot_id")) or raw.get("subtype") == "bot_message",
+        author_id=f"slack:{uid}" if uid and not is_from_me else None,
     )
 
 

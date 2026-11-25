@@ -56,6 +56,18 @@ TOOLS = [
         },
     },
     {
+        "name": "who_is",
+        "description": (
+            "Look up a person across email, Slack and Discord: every name and account they use, and how many "
+            "messages each has. Use it when a name could be the same person in different apps."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"person": {"type": "string", "description": "A name or handle, e.g. 'Priya'. Typos are fine."}},
+            "required": ["person"],
+        },
+    },
+    {
         "name": "recent_activity",
         "description": "List which channels/inboxes had messages recently and how many: a map of 'what is where'.",
         "input_schema": {
@@ -108,6 +120,22 @@ class Tools:
             for m in msgs
         )
 
+    def who_is(self, typed: str) -> str:
+        names = self.searcher.resolve_person(typed)
+        if not names:
+            return f"No one named '{typed}' in your messages."
+        wanted = set(self.store.same_person(names))
+        people = [p for p in self.store.identities() if wanted & {a["author"] for a in p["aliases"]}]
+        if not people:
+            return "\n".join(f"{n} (not linked to other apps yet)" for n in names)
+        lines = []
+        for p in people[:5]:
+            lines.append(f"{p['name']}:")
+            for a in p["aliases"]:
+                account = f" <{a['author_id'].split(':', 1)[1]}>" if a["author_id"] and a["source"] == "gmail" else ""
+                lines.append(f"  {a['source']}: {a['author']}{account}, {a['messages']} messages")
+        return "\n".join(lines)
+
     def run(self, name: str, args: dict) -> tuple[str, bool]:
         """Returns (content, is_error). Errors go back to the model so it can recover."""
         try:
@@ -133,6 +161,8 @@ class Tools:
                     return f"No message {args['ref']}.", True
                 msgs = self.store.thread(m.thread_id) if m.thread_id else [m]
                 return self._show(msgs), False
+            if name == "who_is":
+                return self.who_is(str(args["person"])), False
             if name == "recent_activity":
                 days = int(args.get("days") or 1)
                 rows = self.store.activity(datetime.now(UTC) - timedelta(days=days))

@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS messages (
     is_automated INTEGER NOT NULL DEFAULT 0,
     labels       TEXT NOT NULL DEFAULT '[]',
     intent       TEXT,
-    due_hint     TEXT
+    due_hint     TEXT,
+    author_id    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
@@ -118,6 +119,28 @@ CREATE TABLE IF NOT EXISTS loops (
 );
 CREATE INDEX IF NOT EXISTS idx_loops_status ON loops(status);
 
+-- Identity resolution (pipeline/identity.py): every (source, author) alias belongs to one person.
+-- Rebuilt from the messages after each sync; overrides are what the user said by hand and always win.
+CREATE TABLE IF NOT EXISTS identities (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS identity_aliases (
+    source      TEXT NOT NULL,
+    author      TEXT NOT NULL,
+    author_id   TEXT,
+    identity_id INTEGER NOT NULL,
+    messages    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, author)
+);
+CREATE INDEX IF NOT EXISTS idx_alias_identity ON identity_aliases(identity_id);
+CREATE TABLE IF NOT EXISTS identity_overrides (
+    id     INTEGER PRIMARY KEY,
+    a      TEXT NOT NULL,
+    b      TEXT NOT NULL,
+    action TEXT NOT NULL              -- merge | split
+);
+
 CREATE TABLE IF NOT EXISTS asks (
     id         INTEGER PRIMARY KEY,
     created_at REAL NOT NULL,
@@ -129,11 +152,17 @@ CREATE TABLE IF NOT EXISTS asks (
 """
 
 _COLUMNS = (
-    "id, source, channel, author, ts, text, title, thread_id, url, is_to_me, is_from_me, is_automated, labels, intent, due_hint"
+    "id, source, channel, author, ts, text, title, thread_id, url, is_to_me, is_from_me, is_automated, labels, intent, "
+    "due_hint, author_id"
 )
 _NCOLS = _COLUMNS.count(",") + 1
 # Columns added after the first release: (table, column, type). Older databases get them on open.
-_MIGRATIONS = [("messages", "intent", "TEXT"), ("messages", "due_hint", "TEXT"), ("loops", "promised_at", "REAL")]
+_MIGRATIONS = [
+    ("messages", "intent", "TEXT"),
+    ("messages", "due_hint", "TEXT"),
+    ("loops", "promised_at", "REAL"),
+    ("messages", "author_id", "TEXT"),
+]
 
 
 def _now() -> float:
@@ -206,6 +235,9 @@ class Store:
         self._migrate()
         self.db.executescript(SCHEMA)
         self._backfill_intents()
+        if not self.db.execute("SELECT 1 FROM identity_aliases LIMIT 1").fetchone() and \
+                self.db.execute("SELECT 1 FROM messages LIMIT 1").fetchone():
+            self.rebuild_identities()  # databases from before identities existed
 
     def _migrate(self) -> None:
         for table, column, kind in _MIGRATIONS:
@@ -258,6 +290,7 @@ class Store:
                     json.dumps(m.labels),
                     m.intent,
                     m.due_hint,
+                    m.author_id,
                 )
                 if row is None:
                     cur = self.db.execute(f"INSERT INTO messages ({_COLUMNS}) VALUES ({','.join('?' * _NCOLS)})", values)
@@ -583,6 +616,82 @@ class Store:
             rows = self.db.execute("SELECT * FROM loops ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._to_loop(r) for r in rows]
 
+    # ---- identities ---------------------------------------------------------
+
+    def aliases(self) -> tuple[list, dict[str, int]]:
+        """Every person alias seen in messages, plus message counts keyed by alias key."""
+        from contextos.pipeline.identity import Alias
+
+        found: dict[str, Alias] = {}
+        counts: dict[str, int] = {}
+        rows = self.db.execute(
+            "SELECT source, author, MAX(author_id) AS aid, COUNT(*) AS n FROM messages "
+            "WHERE is_from_me = 0 AND is_automated = 0 AND author NOT IN ('me', 'unknown', 'bot') GROUP BY source, author"
+        )
+        for r in rows:
+            a = Alias(r["source"], r["author"], r["aid"])
+            found[a.key], counts[a.key] = a, r["n"]
+        # DM partners: in "DM: Alice" the other person is Alice even when only you wrote.
+        for r in self.db.execute("SELECT source, substr(channel, 5) AS who, COUNT(*) AS n FROM messages "
+                                 "WHERE channel LIKE 'DM: %' GROUP BY source, channel"):
+            a = Alias(r["source"], r["who"])
+            found.setdefault(a.key, a)
+            counts[a.key] = max(counts.get(a.key, 0), r["n"])
+        return list(found.values()), counts
+
+    def rebuild_identities(self) -> int:
+        """Re-run identity resolution over all stored messages. Returns the number of identities."""
+        from contextos.pipeline.identity import resolve
+
+        aliases, counts = self.aliases()
+        overrides = self.db.execute("SELECT a, b, action FROM identity_overrides ORDER BY id").fetchall()
+        merges = [(r["a"], r["b"]) for r in overrides if r["action"] == "merge"]
+        splits = [(r["a"], r["b"]) for r in overrides if r["action"] == "split"]
+        people = resolve(aliases, counts, merges, splits)
+        with self.db:
+            self.db.execute("DELETE FROM identity_aliases")
+            self.db.execute("DELETE FROM identities")
+            for p in people:
+                iid = self.db.execute("INSERT INTO identities (name) VALUES (?)", (p.name,)).lastrowid
+                self.db.executemany(
+                    "INSERT INTO identity_aliases (source, author, author_id, identity_id, messages) VALUES (?, ?, ?, ?, ?)",
+                    [(a.source, a.author, a.author_id, iid, counts.get(a.key, 0)) for a in p.aliases],
+                )
+        return len(people)
+
+    def add_identity_override(self, a: str, b: str, action: str) -> None:
+        if action not in ("merge", "split"):
+            raise ValueError("action must be merge or split")
+        with self.db:
+            self.db.execute("INSERT INTO identity_overrides (a, b, action) VALUES (?, ?, ?)", (a, b, action))
+        self.rebuild_identities()
+
+    def identities(self, min_sources: int = 1) -> list[dict]:
+        """[{id, name, aliases: [{source, author, author_id, messages}]}], busiest first."""
+        out: dict[int, dict] = {}
+        rows = self.db.execute(
+            "SELECT i.id, i.name, a.source, a.author, a.author_id, a.messages FROM identities i "
+            "JOIN identity_aliases a ON a.identity_id = i.id ORDER BY a.source, a.author"
+        )
+        for r in rows:
+            p = out.setdefault(r["id"], {"id": r["id"], "name": r["name"], "aliases": []})
+            p["aliases"].append({"source": r["source"], "author": r["author"], "author_id": r["author_id"],
+                                 "messages": r["messages"]})
+        people = [p for p in out.values() if len({a["source"] for a in p["aliases"]}) >= min_sources]
+        return sorted(people, key=lambda p: -sum(a["messages"] for a in p["aliases"]))
+
+    def same_person(self, authors: list[str]) -> list[str]:
+        """Every name the people behind `authors` use, in any app. Unknown names come back unchanged."""
+        if not authors:
+            return []
+        marks = ",".join("?" * len(authors))
+        rows = self.db.execute(
+            f"SELECT DISTINCT b.author FROM identity_aliases a JOIN identity_aliases b ON a.identity_id = b.identity_id "
+            f"WHERE a.author IN ({marks})",
+            authors,
+        ).fetchall()
+        return list(dict.fromkeys([*authors, *(r[0] for r in rows)]))
+
     # ---- ask history --------------------------------------------------------
 
     def save_ask(self, question: str, answer: str, refs: list[str], meta: dict) -> int:
@@ -647,5 +756,6 @@ class Store:
             labels=json.loads(r["labels"]),
             intent=r["intent"],
             due_hint=r["due_hint"],
+            author_id=r["author_id"],
             rid=r["rid"],
         )

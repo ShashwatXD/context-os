@@ -67,4 +67,6 @@ def sync(
             progress(f"{src.name} failed: {report.error}")
         report.warnings += getattr(src, "warnings", [])
         store.log_sync(src.name, report.fetched, report.new, report.error)
+    if any(r.new for r in reports):
+        store.rebuild_identities()  # new people (or new aliases of known people) may have arrived
     return reports

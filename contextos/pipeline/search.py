@@ -152,9 +152,13 @@ class Searcher:
             if not names:
                 result.notes.append(f"No one named '{req.person}' in your messages.")
                 return result
-            if [n.lower() for n in names] != [req.person.lower()]:
-                result.notes.append(f"'{req.person}' matched: {', '.join(names)}")
-            filters["authors"] = names
+            # Identity resolution: the same person under their other names in other apps.
+            everyone = self.store.same_person(names)
+            if [n.lower() for n in everyone] != [req.person.lower()]:
+                extra = [n for n in everyone if n not in names]
+                also = f" (same person elsewhere: {', '.join(extra)})" if extra else ""
+                result.notes.append(f"'{req.person}' matched: {', '.join(names)}{also}")
+            filters["authors"] = everyone
 
         query = req.query.strip()
         if not query:

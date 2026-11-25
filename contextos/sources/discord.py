@@ -121,4 +121,5 @@ def convert(raw: dict, gid: str, cid: str, channel: str, is_thread: bool, my_id:
         is_to_me=bool(my_id) and not is_from_me and any(m.get("id") == my_id for m in raw.get("mentions", [])),
         is_from_me=is_from_me,
         is_automated=bool(author.get("bot")),
+        author_id=f"discord:{author['id']}" if author.get("id") and not is_from_me else None,
     )

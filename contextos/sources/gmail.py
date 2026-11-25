@@ -145,6 +145,7 @@ def parse_message(raw: dict, me: str) -> Message:
         is_from_me=is_from_me,
         is_automated=automated,
         labels=labels,
+        author_id=None if is_from_me or not from_addr else f"gmail:{from_addr.lower()}",
     )
 
 
