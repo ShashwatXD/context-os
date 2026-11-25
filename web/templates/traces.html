@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Traces · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Every briefing and question, step by step</p>
+    <h1>Traces</h1>
+  </div>
+</section>
+
+<div class="trace-summary">
+  {% for label, value in view.summary %}
+  <div><strong>{{ value }}</strong><span>{{ label }}</span></div>
+  {% endfor %}
+</div>
+
+{% if view.rows %}
+<div class="trace-table">
+  <table>
+    <thead><tr><th>When</th><th>Run</th><th class="num">Time</th><th class="num">Tokens in / out</th><th class="num">Cost</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for r in view.rows %}
+      <tr>
+        <td class="num muted">{{ r.when }}</td>
+        <td class="trace-label"><a href="/traces/{{ r.id }}"><span class="kind">{{ r.kind }}</span> {{ r.label }}</a></td>
+        <td class="num">{{ r.time }}</td>
+        <td class="num">{{ r.tokens }}</td>
+        <td class="num">{{ r.cost }}</td>
+        <td><span class="chip {{ 'good' if r.status == 'ok' else 'bad' }}">{{ r.status }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">No traces yet. Write a briefing or ask a question, and each run shows up here.</p>
+{% endif %}
+
+<section class="section trace-audit">
+  <h2 class="section-title">Agent tool calls</h2>
+  <p class="muted small">Every tool an AI agent called through ContextOS (Ask or MCP), and which returned messages the guard flagged as instructions aimed at an AI.</p>
+  {% if audit %}
+  <div class="trace-table">
+    <table>
+      <thead><tr><th>When</th><th>Who</th><th>Tool</th><th>Arguments</th><th class="num">Messages</th><th>Flagged</th></tr></thead>
+      <tbody>
+      {% for a in audit %}
+        <tr>
+          <td class="num muted">{{ a.when }}</td>
+          <td>{{ a.actor }}</td>
+          <td><code>{{ a.tool }}</code>{% if not a.ok %} <span class="chip bad">error</span>{% endif %}</td>
+          <td class="args"><code>{{ a.args }}</code></td>
+          <td class="num">{{ a.messages }}</td>
+          <td>{% if a.flagged %}<span class="chip bad">{{ a.flagged | join(', ') }}</span>{% else %}<span class="muted">none</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No tool calls yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

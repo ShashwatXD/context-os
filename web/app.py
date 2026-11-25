@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from contextos import observability as obs
 from contextos.config import Config, load_config, save_settings
 from contextos.services import tasks
 from contextos.services.jobs import Jobs
@@ -132,6 +133,20 @@ def create_app(
         for rec in store.list_digests(limit=90):
             days.setdefault(rec.created_at.astimezone(tz).strftime("%A %d %B"), []).append(rec)
         return page(request, "history.html", cfg, store, days=days)
+
+    @app.get("/traces", response_class=HTMLResponse)
+    def traces_page(request: Request, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):
+        tz = tasks.local_tz()
+        view = views.traces_view(obs.runs(store, limit=100), tz)
+        return page(request, "traces.html", cfg, store, view=view, audit=views.audit_view(obs.audit_rows(store, 30), tz))
+
+    @app.get("/traces/{run_id}", response_class=HTMLResponse)
+    def trace_page(request: Request, run_id: int, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):
+        run = obs.get_run(store, run_id)
+        if not run:
+            raise HTTPException(404)
+        view = views.trace_detail(run, obs.spans(store, run_id), tasks.local_tz())
+        return page(request, "trace.html", cfg, store, view=view)
 
     @app.get("/ask", response_class=HTMLResponse)
     def ask_page(request: Request, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, tzinfo
@@ -280,3 +281,110 @@ def ago(dt: datetime | None, now: datetime | None = None) -> str:
     if secs < 86400:
         return f"{int(secs // 3600)}h ago"
     return f"{int(secs // 86400)}d ago"
+
+
+# ---- traces -----------------------------------------------------------------
+
+
+def _median(values: list[float]) -> float | None:
+    values = sorted(v for v in values if v is not None)
+    return values[len(values) // 2] if values else None
+
+
+def seconds(ms: float | None) -> str:
+    if ms is None:
+        return "-"
+    if ms < 1:
+        return "<1 ms"
+    return f"{ms:.0f} ms" if ms < 1000 else f"{ms / 1000:.1f} s"
+
+
+def dollars(usd: float | None) -> str:
+    if usd is None:
+        return "?"
+    return f"${usd:.4f}" if usd < 0.01 else f"${usd:.3f}"
+
+
+def run_label(run: dict) -> str:
+    meta = run["meta"]
+    if run["name"] == "ask":
+        return meta.get("question") or "Question"
+    if run["name"] == "briefing":
+        n = meta.get("messages")
+        return f"Briefing from {n} messages" if n is not None else "Briefing"
+    return run["name"]
+
+
+def traces_view(runs: list[dict], tz) -> dict:
+    priced = [r["cost_usd"] for r in runs if r["cost_usd"] is not None]
+    return {
+        "summary": [
+            ("Runs", str(len(runs))),
+            ("Median time", seconds(_median([r["ms"] for r in runs]))),
+            ("Tokens", f"{sum(r['tokens_in'] + r['tokens_out'] for r in runs):,}"),
+            ("Spent", dollars(sum(priced)) if priced else "set prices"),
+        ],
+        "rows": [
+            {
+                "id": r["id"],
+                "when": datetime.fromtimestamp(r["started_at"], tz).strftime("%d %b %H:%M"),
+                "kind": r["name"],
+                "label": run_label(r),
+                "time": seconds(r["ms"]),
+                "tokens": f"{r['tokens_in']:,} / {r['tokens_out']:,}",
+                "cost": dollars(r["cost_usd"]),
+                "status": r["status"],
+            }
+            for r in runs
+        ],
+    }
+
+
+def _pretty(value) -> str:
+    return value if isinstance(value, str) else json.dumps(value, indent=2, ensure_ascii=False)
+
+
+def trace_detail(run: dict, spans: list[dict], tz) -> dict:
+    total = max([run["ms"] or 0] + [s["start_ms"] + s["ms"] for s in spans] + [1])
+    rows = []
+    for s in spans:
+        blocks = []
+        if d := s["detail"]:
+            if d.get("kind") == "llm":
+                blocks = [("System prompt", d.get("system", "")), ("Sent to the model", d.get("prompt", "")),
+                          ("Model output", d.get("output", ""))]
+            elif d.get("kind") == "tool":
+                blocks = [("Arguments", d.get("args", {})), ("Result", d.get("result", ""))]
+        rows.append({
+            "name": s["name"],
+            "left": round(100 * s["start_ms"] / total, 2),
+            "width": max(round(100 * s["ms"] / total, 2), 0.6),
+            "time": seconds(s["ms"]),
+            "facts": "  ·  ".join(f"{k}: {v}" for k, v in s["attrs"].items()),
+            "error": s["error"],
+            "is_llm": s["name"].startswith("llm."),
+            "blocks": [(label, (text := _pretty(v)), len(text)) for label, v in blocks],
+        })
+    return {
+        "run": run,
+        "label": run_label(run),
+        "when": datetime.fromtimestamp(run["started_at"], tz).strftime("%A %d %b, %H:%M"),
+        "summary": f"{run['tokens_in']:,} tokens in, {run['tokens_out']:,} out, {dollars(run['cost_usd'])}, "
+                   f"{seconds(run['ms'])} in total",
+        "rows": rows,
+    }
+
+
+def audit_view(rows: list[dict], tz) -> list[dict]:
+    return [
+        {
+            "when": datetime.fromtimestamp(r["at"], tz).strftime("%d %b %H:%M:%S"),
+            "actor": r["actor"],
+            "tool": r["tool"],
+            "args": json.dumps(r["args"], ensure_ascii=False)[:120],
+            "messages": len(r["refs"]),
+            "flagged": r["flagged"],
+            "ok": r["ok"],
+        }
+        for r in rows
+    ]

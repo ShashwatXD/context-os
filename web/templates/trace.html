@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Trace #{{ view.run.id }} · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow"><a href="/traces">Traces</a> · {{ view.run.name }} · {{ view.when }}</p>
+    <h1>{{ view.label }}</h1>
+    <p class="muted small trace-sub">{{ view.summary }}{% if view.run.status != 'ok' %} · <span class="error">{{ view.run.meta.error }}</span>{% endif %}</p>
+  </div>
+</section>
+
+<div class="spans">
+  {% for s in view.rows %}
+  <div class="span-row{{ ' is-llm' if s.is_llm }}">
+    <div class="span-name"><code>{{ s.name }}</code></div>
+    <div class="span-track"><i style="left: {{ s.left }}%; width: {{ s.width }}%"></i></div>
+    <div class="num">{{ s.time }}</div>
+    {% if s.facts %}<div class="span-facts">{{ s.facts }}</div>{% endif %}
+    {% if s.error %}<div class="span-facts error">{{ s.error }}</div>{% endif %}
+    {% if s.blocks %}
+    <details class="span-more">
+      <summary>Show details</summary>
+      {% for label, text, size in s.blocks %}
+      <details class="more-block" {% if size < 4000 %}open{% endif %}>
+        <summary><code>{{ label }} · {{ '{:,}'.format(size) }} chars</code></summary>
+        <pre>{{ text or '(empty)' }}</pre>
+      </details>
+      {% endfor %}
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -11,7 +11,7 @@ from datetime import datetime, tzinfo
 from contextos.config import Config
 from contextos.llm import LLM
 from contextos.models import Message
-from contextos.observability import Tracer, snapshot, usage_delta
+from contextos.observability import Tracer, snapshot, tokens_of, usage_delta
 from contextos.pipeline import loops as loopmem
 from contextos.pipeline.context import build_blocks, estimate_tokens, pack
 from contextos.pipeline.noise import Triage, triage
@@ -165,8 +165,12 @@ def _make_digest(store, llm, cfg, start, end, tz, progress, tracer: Tracer) -> D
         def condense(chunk: str) -> str:
             return llm.text(model=cfg.worker_model, system=MAP_SYSTEM, prompt=f"<messages>\n{chunk}\n</messages>", max_tokens=8192)
 
-        with tracer.span("llm.condense", model=cfg.worker_model, chunks=n_chunks), ThreadPoolExecutor(max_workers=4) as pool:
+        before_condense = snapshot(llm)
+        with tracer.span("llm.condense", model=cfg.worker_model, chunks=n_chunks) as s, ThreadPoolExecutor(max_workers=4) as pool:
             notes = list(pool.map(condense, chunks))
+            s.attrs.update(tokens_of(before_condense, snapshot(llm)))
+            s.detail = {"kind": "llm", "model": cfg.worker_model, "system": MAP_SYSTEM,
+                        "prompt": "\n\n---\n\n".join(chunks), "output": "\n\n---\n\n".join(notes)}
         context = "\n\n".join(f"## Notes, part {i + 1} of {n_chunks}\n{n}" for i, n in enumerate(notes))
 
     progress(f"Writing your briefing with {cfg.main_model}")
@@ -182,8 +186,12 @@ def _make_digest(store, llm, cfg, start, end, tz, progress, tracer: Tracer) -> D
         f"{memory_block}"
         f"<messages>\n{context}\n</messages>"
     )
-    with tracer.span("llm.brief", model=cfg.main_model, est_prompt_tokens=estimate_tokens(prompt)):
-        output = llm.json(model=cfg.main_model, system=digest_system(cfg), prompt=prompt, schema=DIGEST_SCHEMA)
+    before_brief = snapshot(llm)
+    with tracer.span("llm.brief", model=cfg.main_model) as s:
+        s.detail = {"kind": "llm", "model": cfg.main_model, "system": digest_system(cfg), "prompt": prompt}
+        output = llm.json(model=cfg.main_model, system=s.detail["system"], prompt=prompt, schema=DIGEST_SCHEMA)
+        s.detail["output"] = output
+        s.attrs.update(tokens_of(before_brief, snapshot(llm)))
 
     with tracer.span("verify") as s:
         dropped = verify_refs(output, set(by_ref))

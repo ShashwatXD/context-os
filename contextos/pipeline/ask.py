@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from contextos.config import Config
 from contextos.llm import LLM
 from contextos.models import Message
-from contextos.observability import Tracer, audit, snapshot, usage_delta
+from contextos.observability import Tracer, audit, snapshot, tokens_of, usage_delta
 from contextos.pipeline.context import render_message
 from contextos.pipeline.digest import _about_user
 from contextos.pipeline.search import Searcher, SearchRequest, parse_date
@@ -213,9 +213,14 @@ def ask(
 
     try:
         for step in range(1, MAX_STEPS + 1):
+            before_turn = snapshot(llm)
             with tracer.span("llm.turn", model=cfg.main_model, step=step) as s:
                 turn = llm.tool_turn(model=cfg.main_model, system=system, history=history, tools=TOOLS)
                 s.attrs["tool_calls"] = len(turn.calls)
+                s.attrs.update(tokens_of(before_turn, snapshot(llm)))
+                s.detail = {"kind": "llm", "model": cfg.main_model, "system": system if step == 1 else "(same as step 1)",
+                            "prompt": question if step == 1 else f"(question plus {len(history) - 2} earlier turns)",
+                            "output": {"text": turn.text, "tool_calls": [{"name": c.name, "args": c.args} for c in turn.calls]}}
             # Keep the model's turn exactly as returned (it can carry hidden reasoning signatures).
             history.append(turn.message)
 
@@ -226,9 +231,10 @@ def ask(
             for call in turn.calls:
                 if on_step:
                     on_step(call.name, call.args)
-                with tracer.span(f"tool.{call.name}", args=call.args) as s:
+                with tracer.span(f"tool.{call.name}") as s:
                     content, is_error = tools.run(call.name, call.args)
                     s.attrs["error"] = is_error
+                    s.detail = {"kind": "tool", "args": call.args, "result": content}
                 results.append((call, content, is_error))
             history.append(llm.tool_results(results))  # all results in ONE message
     except Exception as e:

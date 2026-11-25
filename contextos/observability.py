@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS trace_spans (
     start_ms REAL NOT NULL,
     ms       REAL NOT NULL,
     attrs    TEXT NOT NULL DEFAULT '{}',
-    error    TEXT
+    error    TEXT,
+    detail   TEXT                          -- full request/response for model and tool steps (JSON)
 );
 CREATE INDEX IF NOT EXISTS idx_spans_run ON trace_spans(run_id);
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -84,6 +85,19 @@ def cost(usage: dict, prices: dict[str, tuple[float, float]]) -> float | None:
     return round(total, 6)
 
 
+MAX_DETAIL_CHARS = 200_000  # per text field; a busy day's prompt fits, a runaway one doesn't fill the disk
+
+
+def _clip(value):
+    if isinstance(value, str) and len(value) > MAX_DETAIL_CHARS:
+        return value[:MAX_DETAIL_CHARS] + f"\n…[{len(value) - MAX_DETAIL_CHARS:,} more characters not stored]"
+    if isinstance(value, dict):
+        return {k: _clip(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clip(v) for v in value]
+    return value
+
+
 @dataclass
 class Span:
     name: str
@@ -91,6 +105,7 @@ class Span:
     ms: float = 0.0
     attrs: dict = field(default_factory=dict)
     error: str | None = None
+    detail: dict | None = None  # what was sent and what came back, shown under "details" on the Traces page
 
 
 class Tracer:
@@ -128,8 +143,9 @@ class Tracer:
             if self.store is not None and self.run_id is not None:
                 with self.store.db:
                     self.store.db.execute(
-                        "INSERT INTO trace_spans (run_id, name, start_ms, ms, attrs, error) VALUES (?, ?, ?, ?, ?, ?)",
-                        (self.run_id, s.name, round(s.start_ms, 2), round(s.ms, 2), json.dumps(s.attrs, default=str), s.error),
+                        "INSERT INTO trace_spans (run_id, name, start_ms, ms, attrs, error, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (self.run_id, s.name, round(s.start_ms, 2), round(s.ms, 2), json.dumps(s.attrs, default=str), s.error,
+                         json.dumps(_clip(s.detail), default=str) if s.detail else None),
                     )
 
     def finish(self, usage: dict | None = None, error: str | None = None, **meta) -> None:
@@ -171,7 +187,18 @@ def runs(store, limit: int = 20) -> list[dict]:
 
 def spans(store, run_id: int) -> list[dict]:
     rows = store.db.execute("SELECT * FROM trace_spans WHERE run_id = ? ORDER BY start_ms, id", (run_id,)).fetchall()
-    return [{**dict(r), "attrs": json.loads(r["attrs"])} for r in rows]
+    return [{**dict(r), "attrs": json.loads(r["attrs"]), "detail": json.loads(r["detail"]) if r["detail"] else None} for r in rows]
+
+
+def get_run(store, run_id: int) -> dict | None:
+    r = store.db.execute("SELECT * FROM trace_runs WHERE id = ?", (run_id,)).fetchone()
+    return {**dict(r), "meta": json.loads(r["meta"])} if r else None
+
+
+def tokens_of(before: dict, after: dict) -> dict:
+    """{'tokens_in': n, 'tokens_out': m} used between two snapshots, for a span's attrs."""
+    d = usage_delta(before, after)
+    return {"tokens_in": sum(u["input"] for u in d.values()), "tokens_out": sum(u["output"] for u in d.values())}
 
 
 def audit(store, actor: str, tool: str, args: dict, refs: list[str], flagged: list[str], ok: bool, ms: float) -> None:
@@ -188,4 +215,5 @@ def audit_rows(store, limit: int = 50) -> list[dict]:
             for r in rows]
 
 
-__all__ = ["Tracer", "audit", "audit_rows", "cost", "prices_from_env", "runs", "snapshot", "spans", "usage_delta"]
+__all__ = ["Tracer", "audit", "audit_rows", "cost", "get_run", "prices_from_env", "runs", "snapshot", "spans", "tokens_of",
+           "usage_delta"]

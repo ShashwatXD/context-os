@@ -164,6 +164,7 @@ _MIGRATIONS = [
     ("loops", "promised_at", "REAL"),
     ("messages", "author_id", "TEXT"),
     ("messages", "risk", "TEXT"),
+    ("trace_spans", "detail", "TEXT"),
 ]
 
 
