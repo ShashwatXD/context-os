@@ -288,3 +288,30 @@ def test_today_shows_open_loops_and_done_closes_them(client, store):
     assert "1 loop closed in the last day" in client.get("/today").text
     client.post(f"/loops/{lid}", data={"action": "reopen"})
     assert store.get_loop(lid).status == "open"
+
+
+def test_gmail_client_from_env_shows_one_click_sign_in(client, cfg, monkeypatch):
+    from contextos.sources.gmail import GmailSource
+
+    assert "Paste your Google OAuth client ID" in client.get("/sources").text
+    monkeypatch.setenv("GMAIL_CLIENT_ID", "123.apps.googleusercontent.com")
+    monkeypatch.setenv("GMAIL_CLIENT_SECRET", "s3cret")
+    assert GmailSource(cfg).client_config()["installed"]["client_id"] == "123.apps.googleusercontent.com"
+    assert "Sign in with Google" in client.get("/sources").text
+    (cfg.home / "gmail_account.txt").write_text("sam@x.com")
+    assert "Sign in as sam@x.com" in client.get("/sources").text
+
+
+def test_gmail_client_paste_validates(client, cfg):
+    bad = client.post("/settings/gmail-client", data={"client_id": "nope", "client_secret": "x"})
+    assert bad.status_code == 400 and not cfg.gmail_credentials.exists()
+    ok = client.post("/settings/gmail-client", data={"client_id": "9.apps.googleusercontent.com", "client_secret": "x"},
+                     follow_redirects=False)
+    assert ok.status_code == 303
+    assert json.loads(cfg.gmail_credentials.read_text())["installed"]["client_secret"] == "x"
+
+
+def test_expired_gmail_shows_reconnect(client, cfg, store):
+    cfg.gmail_token.write_text("{}")
+    store.log_sync("gmail", 0, 0, "AuthRequired: Gmail login expired. Click Reconnect on Sources (one click).")
+    assert "Reconnect Gmail" in client.get("/sources").text

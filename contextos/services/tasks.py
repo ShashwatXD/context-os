@@ -124,8 +124,17 @@ def run_ask(cfg: Config, llm_factory: LLMFactory, question: str, job: Job) -> di
 
 
 def connect_gmail(cfg: Config, progress: Callable[[str], None]) -> dict:
+    from contextos.services.sync import sync
     from contextos.sources.gmail import GmailSource
 
     progress("Opening Google sign-in in a new browser tab…")
     email = GmailSource(cfg).authorize()
+    # Pull mail right away, so the page shows it connected (and clears an old "login expired" error).
+    progress(f"Connected as {email}. Fetching your mail…")
+    store = Store(cfg.db_path)
+    try:
+        with RUN_LOCK:
+            sync(store, cfg, only="gmail", progress=progress)
+    finally:
+        store.close()
     return {"email": email}

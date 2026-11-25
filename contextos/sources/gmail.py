@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import os
 import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -35,22 +37,63 @@ class GmailSource:
         return self.cfg.gmail_token.exists()
 
     def setup_hint(self) -> str:
-        if not self.cfg.gmail_credentials.exists():
-            return f"put your OAuth client file at {self.cfg.gmail_credentials}, then run `contextos auth gmail`"
-        return "run `contextos auth gmail`"
+        if not self.has_client():
+            return "set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in .env (or paste them on Sources), then Connect Gmail"
+        return "click Connect Gmail on Sources, or run `contextos auth gmail`"
 
     # ---- auth ---------------------------------------------------------------
+    #
+    # Sign-in is the normal Google screen: pick your account, allow read-only access, done. The only setup is
+    # an OAuth client (a client ID + secret), and it can come from three places, first match wins:
+    #   1. GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET in .env  (set once; every connect after that is one click)
+    #   2. the ID + secret pasted on the Sources page      (saved as the client file below)
+    #   3. the client JSON file downloaded from Google Cloud
+    # After the first sign-in, the account is remembered, so reconnecting pre-selects it.
+
+    def client_config(self) -> dict | None:
+        cid, secret = os.environ.get("GMAIL_CLIENT_ID", "").strip(), os.environ.get("GMAIL_CLIENT_SECRET", "").strip()
+        if cid and secret:
+            return client_config_from(cid, secret)
+        try:
+            data = json.loads(self.cfg.gmail_credentials.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        return data if "installed" in data else None
+
+    def has_client(self) -> bool:
+        return self.client_config() is not None
+
+    @property
+    def _account_file(self):
+        return self.cfg.home / "gmail_account.txt"
+
+    def remembered_account(self) -> str | None:
+        try:
+            return self._account_file.read_text().strip() or None
+        except FileNotFoundError:
+            return None
 
     def authorize(self) -> str:
         from google_auth_oauthlib.flow import InstalledAppFlow
 
-        if not self.cfg.gmail_credentials.exists():
-            raise AuthRequired(f"Missing {self.cfg.gmail_credentials}. See README → Gmail setup.")
-        flow = InstalledAppFlow.from_client_secrets_file(str(self.cfg.gmail_credentials), SCOPES)
-        creds = flow.run_local_server(port=0, open_browser=True)
+        config = self.client_config()
+        if config is None:
+            raise AuthRequired("No Google OAuth client yet. Set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in .env "
+                               "(README → Gmail), or paste them on the Sources page.")
+        flow = InstalledAppFlow.from_client_config(config, SCOPES)
+        extra = {"login_hint": hint} if (hint := self.remembered_account()) else {}
+        creds = flow.run_local_server(
+            port=0,
+            open_browser=True,
+            authorization_prompt_message="",
+            success_message="Gmail is connected to ContextOS. You can close this tab.",
+            **extra,
+        )
         self.cfg.gmail_token.write_text(creds.to_json())
         self.cfg.gmail_token.chmod(0o600)
-        return self._service().users().getProfile(userId="me").execute()["emailAddress"]
+        email = self._service().users().getProfile(userId="me").execute()["emailAddress"]
+        self._account_file.write_text(email)
+        return email
 
     def _service(self):
         from google.auth.exceptions import RefreshError
@@ -63,7 +106,7 @@ class GmailSource:
             try:
                 creds.refresh(Request())
             except RefreshError as e:
-                raise AuthRequired("Gmail login expired. Run `contextos auth gmail` again.") from e
+                raise AuthRequired("Gmail login expired. Click Reconnect on Sources (one click).") from e
             self.cfg.gmail_token.write_text(creds.to_json())
         return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
@@ -85,6 +128,19 @@ class GmailSource:
 
         for raw in _get_many(svc, ids[: self.cfg.gmail_max_messages]):
             yield parse_message(raw, me)
+
+
+def client_config_from(client_id: str, client_secret: str) -> dict:
+    """The 'Desktop app' client file Google would give you, built from its two values."""
+    return {
+        "installed": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://localhost"],
+        }
+    }
 
 
 def _get_many(svc, ids: list[str], batch_size: int = 25) -> Iterator[dict]:

@@ -27,17 +27,29 @@
     {% if r.log and r.log.error %}<p class="error small">Last sync failed: {{ r.log.error }}</p>{% endif %}
 
     {% if r.name == 'gmail' %}
-      {% if gmail_token %}
+      {% if gmail_token and gmail_expired %}
+        <button class="btn primary" id="gmail-connect">Reconnect Gmail</button>
+        <p class="muted small">Google asked to sign in again{% if gmail_account %} as {{ gmail_account }}{% endif %}. One click.</p>
+      {% elif gmail_token %}
+        {% if gmail_account %}<p class="muted small">Signed in as {{ gmail_account }}</p>{% endif %}
         <form method="post" action="/settings/gmail-disconnect"><button class="btn ghost small">Disconnect</button></form>
       {% elif gmail_creds %}
-        <button class="btn primary" id="gmail-connect">Connect Gmail</button>
+        <button class="btn primary" id="gmail-connect">{{ 'Sign in as ' ~ gmail_account if gmail_account else 'Sign in with Google' }}</button>
         <p class="muted small">Opens Google sign-in in a new tab. Read-only access.</p>
       {% else %}
-        <form method="post" action="/settings/gmail-credentials" enctype="multipart/form-data" class="upload">
-          <label class="muted small">Step 1: upload your Google OAuth client file (README → Gmail explains how to get it)</label>
-          <input type="file" name="file" accept=".json,application/json" required>
-          <button class="btn">Upload</button>
+        <form method="post" action="/settings/gmail-client" class="upload">
+          <label class="muted small" for="gmail-client-id">Paste your Google OAuth client ID and secret once (README → Gmail). After that, signing in is one click.</label>
+          <input id="gmail-client-id" name="client_id" placeholder="Client ID (…apps.googleusercontent.com)" required autocomplete="off">
+          <input id="gmail-client-secret" name="client_secret" type="password" placeholder="Client secret" required autocomplete="off">
+          <button class="btn">Save</button>
         </form>
+        <details class="muted small">
+          <summary>Have the JSON file instead?</summary>
+          <form method="post" action="/settings/gmail-credentials" enctype="multipart/form-data" class="upload">
+            <input type="file" name="file" accept=".json,application/json" required>
+            <button class="btn">Upload</button>
+          </form>
+        </details>
       {% endif %}
     {% elif not r.configured %}
       <p class="muted small">Add a token in <a href="/settings">Settings</a>. The README has the 2-minute setup.</p>

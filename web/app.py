@@ -21,6 +21,7 @@ from contextos.services import tasks
 from contextos.services.jobs import Jobs
 from contextos.services.scheduler import Scheduler
 from contextos.sources import all_sources
+from contextos.sources.gmail import GmailSource, client_config_from
 from contextos.storage import Store
 from web import views
 
@@ -166,8 +167,10 @@ def create_app(
             cfg,
             store,
             rows=rows,
-            gmail_creds=cfg.gmail_credentials.exists(),
+            gmail_creds=GmailSource(cfg).has_client(),
             gmail_token=cfg.gmail_token.exists(),
+            gmail_expired=bool((logs.get("gmail") or {}).get("error") and "expired" in logs["gmail"]["error"].lower()),
+            gmail_account=GmailSource(cfg).remembered_account(),
         )
 
     @app.get("/settings", response_class=HTMLResponse)
@@ -294,6 +297,15 @@ def create_app(
         if "installed" not in data:
             raise HTTPException(400, "Expected a 'Desktop app' OAuth client file (it has an \"installed\" key).")
         cfg.gmail_credentials.write_bytes(raw)
+        cfg.gmail_credentials.chmod(0o600)
+        return RedirectResponse("/sources", status_code=303)
+
+    @app.post("/settings/gmail-client")
+    def gmail_client(client_id: str = Form(...), client_secret: str = Form(...), cfg: Config = Depends(cfg_dep)):
+        client_id, client_secret = client_id.strip(), client_secret.strip()
+        if not client_id.endswith(".apps.googleusercontent.com") or not client_secret:
+            raise HTTPException(400, "That doesn't look like a Google OAuth client ID (it ends in .apps.googleusercontent.com).")
+        cfg.gmail_credentials.write_text(json.dumps(client_config_from(client_id, client_secret)))
         cfg.gmail_credentials.chmod(0o600)
         return RedirectResponse("/sources", status_code=303)
 
