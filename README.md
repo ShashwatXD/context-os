@@ -7,8 +7,6 @@ ContextOS turns scattered Gmail, Slack and Discord messages into clean, cited co
 [![Google Gemini](https://img.shields.io/badge/Google%20Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
 [![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 
-![The Today page: a briefing grouped into Needs you, Important and FYI, each item linked to its source messages](assets/today.png)
-
 ## Why
 
 Your inbox shows what's *new*, not what's *still pending*.
