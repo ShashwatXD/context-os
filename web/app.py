@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
@@ -24,7 +24,7 @@ from contextos.services.scheduler import Scheduler
 from contextos.sources import all_sources
 from contextos.sources.gmail import GmailSource, client_config_from
 from contextos.storage import Store
-from web import views
+from web import dbview, views
 
 HERE = Path(__file__).parent
 
@@ -55,6 +55,8 @@ def create_app(
         b"".join(f.read_bytes() for f in sorted((HERE / "static").iterdir()) if f.is_file())
     ).hexdigest()[:10]
     templates.env.filters["ago"] = views.ago
+    # Query string with some parameters changed (sorting and paging on the Data pages).
+    templates.env.globals["qs"] = lambda params, **changes: urlencode({**params, **changes})
     templates.env.filters["local"] = lambda dt, fmt="%H:%M": dt.astimezone(tasks.local_tz()).strftime(fmt) if dt else ""
 
     # Your messages are on this server, so only answer to this machine. Checking Host blocks DNS-rebinding
@@ -147,6 +149,27 @@ def create_app(
             raise HTTPException(404)
         view = views.trace_detail(run, obs.spans(store, run_id), tasks.local_tz())
         return page(request, "trace.html", cfg, store, view=view)
+
+    @app.get("/data", response_class=HTMLResponse)
+    def data_page(request: Request, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):
+        return page(request, "data.html", cfg, store, groups=dbview.overview(store), size=dbview.db_size(store),
+                    db_path=str(cfg.db_path))
+
+    @app.get("/data/{table}", response_class=HTMLResponse)
+    def data_table(request: Request, table: str, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):
+        if table not in dbview.TABLES:
+            raise HTTPException(404)
+        view = dbview.browse(store, table, dict(request.query_params), tasks.local_tz())
+        return page(request, "data_table.html", cfg, store, view=view, tables=list(dbview.TABLES))
+
+    @app.get("/data/{table}/{rowid}", response_class=HTMLResponse)
+    def data_row(request: Request, table: str, rowid: int, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):
+        if table not in dbview.TABLES:
+            raise HTTPException(404)
+        view = dbview.row_detail(store, table, rowid, tasks.local_tz())
+        if view is None:
+            raise HTTPException(404)
+        return page(request, "data_row.html", cfg, store, view=view)
 
     @app.get("/ask", response_class=HTMLResponse)
     def ask_page(request: Request, cfg: Config = Depends(cfg_dep), store: Store = Depends(store_dep)):

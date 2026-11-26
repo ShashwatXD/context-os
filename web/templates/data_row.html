@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ view.table }} #{{ view.rowid }} · Data · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow"><a href="/data">Data</a> · <a href="/data/{{ view.table }}">{{ view.table }}</a> · row {{ view.rowid }}</p>
+    <h1><code class="h1code">{{ view.table }}</code> #{{ view.rowid }}</h1>
+    <p class="muted small">{{ view.info.what }}</p>
+    {% if view.links %}<p class="row-links">{% for label, href in view.links %}<a href="{{ href }}" {% if href.startswith('http') %}target="_blank" rel="noopener"{% endif %}>{{ label }}</a>{% endfor %}</p>{% endif %}
+  </div>
+</section>
+
+<dl class="fields">
+  {% for f in view.fields %}
+  <dt><code>{{ f.name }}</code></dt>
+  <dd>
+    {% if f.kind == 'vector' %}
+      <div class="vec">
+        <p class="small">{{ f.dims }} numbers · {{ '{:,}'.format(f.bytes) }} bytes · length {{ f.norm }} (scaled to 1, so a dot product is cosine similarity)</p>
+        <div class="vec-bars" aria-label="First 48 values">{% for b in f.bars %}<i style="height: {{ (b if b > 0 else -b) / 2 + 1 }}px" class="{{ 'neg' if b < 0 }}"></i>{% endfor %}</div>
+        <p class="muted small">First values: <code>{{ f.first | join(', ') }}</code> …</p>
+      </div>
+    {% elif f.kind == 'json' %}<pre class="field-pre">{{ f.text }}</pre>
+    {% elif f.kind == 'time' %}{{ f.text }} <span class="muted small">({{ f.raw }})</span>
+    {% elif f.kind == 'null' %}<span class="muted">NULL</span>
+    {% elif f.text|length > 160 %}<pre class="field-pre">{{ f.text }}</pre>
+    {% else %}{{ f.text }}{% endif %}
+  </dd>
+  {% endfor %}
+</dl>
+
+{% for g in view.related %}
+<section class="section related">
+  <h2 class="section-title">{{ g.label }} <span class="muted small">· <code>{{ g.table }}</code></span></h2>
+  <div class="trace-table data-table">
+    <table>
+      <thead><tr>{% for c in g.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for r in g.rows %}
+        <tr class="clickable" onclick="location.href='/data/{{ g.table }}/{{ r.rowid }}'">
+          {% for c in r.cells %}<td class="k-{{ c.kind }}">{% if loop.first %}<a href="/data/{{ g.table }}/{{ r.rowid }}">{{ c.text }}</a>{% else %}{{ c.text }}{% endif %}</td>{% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

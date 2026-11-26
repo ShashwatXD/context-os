@@ -18,20 +18,57 @@ Your inbox shows what's *new*, not what's *still pending*.
 
 ## How It Works
 
+Every message, from any source, is converted into **one schema**, linked to **the person** who sent it, and stored with its **embedding**. The LLM only ever reads that schema, and answers in **a fixed JSON schema**. The same stored data is served to the website and, over MCP, to other AI agents.
+
 ```mermaid
 flowchart TD
-    A["Gmail · Slack · Discord"] --> B["1. Collect<br/>new messages, every 15 min"]
-    B --> C["2. Clean<br/>drop noise, link the same person across apps"]
-    C --> D["3. Understand<br/>find asks, promises and deadlines"]
-    D --> E["4. Guard<br/>flag messages that try to give orders to an AI"]
-    E --> F["5. Pick<br/>hybrid search, fit only what matters in the prompt"]
-    F --> G["6. Answer<br/>briefing, open loops, or MCP tools for agents"]
-    G --> H["You · Claude · Cursor"]
+    SRC["Gmail · Slack · Discord"] -- "every 15 min" --> SCH["Code: one Message schema<br/>intent · deadline · risk · person"]
+    SCH --> DB[("SQLite<br/>messages + embeddings<br/>people · loops")]
+    SCH -. "embedding model" .-> DB
+
+    DB -- "morning / Refresh" --> PICK["Code: drop noise,<br/>add open loops, fit 50k tokens"]
+    PICK --> LLM1["Gemini<br/>briefing as fixed JSON"]
+    LLM1 --> CHK["Code: verify citations,<br/>save briefing and loops"]
+
+    DB -- "on demand" --> TOOLS["Code: tools<br/>search · thread · loops · who_is"]
+    TOOLS <--> ASK["Gemini<br/>Ask page"]
+    TOOLS <--> MCP["Claude · Cursor<br/>over MCP"]
+
+    CHK --> WEB["Website<br/>Today · Ask · Traces · Data"]
+    ASK --> WEB
+
+    classDef llm fill:#fff3e0,stroke:#d9822b,color:#3d2400
+    classDef store fill:#eef0ff,stroke:#5b54e8,color:#1a1740
+    class LLM1,ASK llm
+    class DB store
 ```
 
-Steps 1 to 4 are plain code (no model call). Gemini is used only to write the briefing, answer questions and embed text for search. Every citation it returns is checked against real messages, and every step is traced.
+Orange boxes call an LLM. Everything else is plain code.
 
-An open loop moves like this: **open** → (you answer) **closed**, or → ("I'll do it Friday") **promised** → **closed**, or → (no news for days) **stale**.
+### Where AI is used
+
+| Call | When | Model | Output |
+|---|---|---|---|
+| Embedding | After each sync, and for each search query | `gemini-embedding-001` | 768 numbers per message, stored next to it |
+| Briefing | Each morning, or on Refresh | `gemini-3.8-flash` | JSON: needs you, important, FYI, loops opened/updated |
+| Condense | Only on days over 50k tokens: chunks of 25k, 4 in parallel | `gemini-3.1-flash-lite` | Short notes that keep every `[m42]` citation |
+| Ask | Each question, up to 8 tool-calling turns | `gemini-3.8-flash` | Answer with `[m42]` citations |
+
+Fetching, converting to the schema, intent and deadline tags, linking people, the injection guard, the noise filter, search scoring, citation checks and closing loops are all code. All model calls go through one file, `contextos/llm/gemini.py`, with retries on rate limits and a recorded token count for each call.
+
+### Open loops
+
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> open: someone asks you,<br/>or you ask someone
+    open --> promised: you reply "I'll do it Friday"
+    promised --> closed: you deliver
+    open --> closed: you answer in the same thread or DM
+    open --> stale: no news for 7 days,<br/>or 3 days past the due date
+```
+
+A loop is opened by the briefing, only with evidence from a real message the guard didn't flag. It is closed by code when your reply lands in the same thread or DM, with no model call. Each day the model sees open loops as one line each, not the old messages.
 
 ## What Gets Stored
 
@@ -114,13 +151,31 @@ Then connect sources on the **Sources** tab.
 
 ## Use It From AI Agents (MCP)
 
+ContextOS runs as a local MCP server over stdio: your AI app starts `contextos mcp` as a background process and talks to it through stdin/stdout. Nothing listens on a port, and the data never leaves your machine.
+
 ```bash
 claude mcp add contextos -- /path/to/context-os/.venv/bin/contextos mcp
 ```
 
 For Claude Desktop or Cursor, add `{"mcpServers": {"contextos": {"command": "/path/to/context-os/.venv/bin/contextos", "args": ["mcp"]}}}` to their MCP config.
 
-Tools: `open_loops`, `latest_briefing`, `search_messages`, `get_thread`, `who_is`, `recent_activity`. All are read-only, message text is marked untrusted, and every call lands in the audit log.
+| Tool | Input | Returns |
+|---|---|---|
+| `open_loops` | none | What you owe people and what you're waiting on, with links |
+| `latest_briefing` | `window`: `today` or `24h` | Today's briefing |
+| `search_messages` | `query`, `person`, `after`, `before`, `source`, `channel` (all optional) | Matching messages from every app |
+| `get_thread` | `ref`, e.g. `m42` | The whole conversation |
+| `who_is` | `person` | One person's names and accounts across apps |
+| `recent_activity` | `days` | Active inboxes and channels, with counts |
+
+What happens when you ask Claude "what do I still owe people?":
+
+1. On start, Claude's app launches `contextos mcp` and receives the six tools and their input schemas.
+2. Claude's model decides to call `open_loops`.
+3. ContextOS reads SQLite (no LLM), writes the call to the audit log, and returns the loops with links, marked as untrusted data.
+4. Claude's model writes the answer.
+
+The thinking is done by the calling agent's model. ContextOS only uses Gemini here to embed the query for `search_messages`. All tools are read-only.
 
 ## Quality
 
@@ -142,6 +197,13 @@ contextos people    # who is linked across apps; `people merge` / `people split`
 The sets are small and hand-written, so read them as a regression check, not a claim about real inboxes. Known misses are printed on every run. CI fails if any layer drops below its threshold.
 
 For cost on the Traces page, add model prices (USD per million input/output tokens) to `.env`, for example `CONTEXTOS_PRICES="gemini-3.8-flash=0.30/2.50"`. Use current prices from Google's pricing page.
+
+## Known Limitations
+
+- The briefing window starts at midnight, so a message (or your reply) that arrives after your last Refresh of the day isn't seen by the next morning's briefing. A fix that starts each window where the last briefing ended is planned.
+- A reply sent after a loop went stale doesn't close it.
+- Intent and deadlines come from rules: an ask worded in an unusual way is tagged `info`. The model still sees the full message in the briefing.
+- Promotions are stored and embedded so they stay searchable; they are only dropped when the briefing is built.
 
 ## Privacy
 

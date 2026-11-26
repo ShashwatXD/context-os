@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ view.table }} · Data · ContextOS{% endblock %}
+{% set p = view.params %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow"><a href="/data">Data</a> · {{ view.info.group }}</p>
+    <h1><code class="h1code">{{ view.table }}</code></h1>
+    <p class="muted small">{{ view.info.what }}</p>
+  </div>
+</section>
+
+<form class="data-filters" method="get" action="/data/{{ view.table }}">
+  <label class="df wide"><span>Search text</span><input id="df-q" name="q" value="{{ p.q or '' }}" placeholder="Any text column"></label>
+  {% for col, values in view.quick.items() %}
+  <label class="df"><span>{{ col }}</span>
+    <select id="df-{{ col }}" name="qf_{{ col }}">
+      <option value="">All</option>
+      {% for v, n in values %}<option value="{{ v }}" {{ 'selected' if p['qf_' ~ col] == v|string }}>{{ v }} ({{ n }})</option>{% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  <label class="df"><span>Column</span>
+    <select id="df-col" name="f_col">
+      <option value="">Any column…</option>
+      {% for c in view.columns %}<option value="{{ c.name }}" {{ 'selected' if p.f_col == c.name }}>{{ c.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="df"><span>Match</span>
+    <select id="df-op" name="f_op">
+      <option value="contains" {{ 'selected' if p.f_op != 'eq' }}>contains</option>
+      <option value="eq" {{ 'selected' if p.f_op == 'eq' }}>equals</option>
+    </select>
+  </label>
+  <label class="df"><span>Value</span><input id="df-val" name="f_val" value="{{ p.f_val or '' }}"></label>
+  {% if view.time_col %}
+  <label class="df"><span>From</span><input id="df-after" type="date" name="after" value="{{ p.after or '' }}"></label>
+  <label class="df"><span>To</span><input id="df-before" type="date" name="before" value="{{ p.before or '' }}"></label>
+  {% endif %}
+  {% if view.table == 'messages' %}
+  <label class="df check"><input id="df-flagged" type="checkbox" name="flagged" value="1" {{ 'checked' if p.flagged }}><span>Only flagged by the guard</span></label>
+  {% endif %}
+  <div class="df-actions"><button class="btn primary small">Apply</button><a class="btn ghost small" href="/data/{{ view.table }}">Reset</a></div>
+</form>
+
+<p class="muted small data-count">{{ '{:,}'.format(view.total) }} row{{ '' if view.total == 1 else 's' }} · page {{ view.page }} of {{ view.pages }} · click a row for every field and its linked rows</p>
+
+<div class="trace-table data-table">
+  <table>
+    <thead><tr>
+      {% for c in view.columns %}
+      {% set next_dir = 'asc' if (view.sort == c.name and view.dir == 'desc') else 'desc' %}
+      <th><a href="?{{ qs(p, sort=c.name, dir=next_dir, page=1) }}">{{ c.name }}{% if view.sort == c.name %} {{ '↓' if view.dir == 'desc' else '↑' }}{% endif %}</a><small>{{ c.type or 'ANY' }}</small></th>
+      {% endfor %}
+    </tr></thead>
+    <tbody>
+    {% for r in view.rows %}
+      <tr class="clickable" onclick="location.href='/data/{{ view.table }}/{{ r.rowid }}'">
+        {% for c in r.cells %}<td class="k-{{ c.kind }}" {% if c.full %}title="{{ c.full }}"{% endif %}>{% if loop.first %}<a href="/data/{{ view.table }}/{{ r.rowid }}">{{ c.text }}</a>{% else %}{{ c.text }}{% endif %}</td>{% endfor %}
+      </tr>
+    {% else %}
+      <tr><td colspan="{{ view.columns|length }}" class="muted">No rows match these filters.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if view.pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if view.page > 1 %}<a class="btn small" href="?{{ qs(p, page=view.page - 1) }}">← Newer</a>{% endif %}
+  {% if view.page < view.pages %}<a class="btn small" href="?{{ qs(p, page=view.page + 1) }}">Older →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

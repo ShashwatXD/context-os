@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Data · ContextOS{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Everything ContextOS has stored, read-only</p>
+    <h1>Data</h1>
+    <p class="muted small db-path"><code>{{ db_path }}</code> · {{ '%.1f' | format(size / 1048576) }} MB · one SQLite file</p>
+  </div>
+</section>
+
+<div class="data-map" aria-label="How the tables connect">
+  <span class="dm-node">messages</span><span class="dm-edge">rid →</span><span class="dm-node">embeddings</span>
+  <span class="dm-sep"></span>
+  <span class="dm-node">messages</span><span class="dm-edge">author →</span><span class="dm-node">identity_aliases</span><span class="dm-edge">→</span><span class="dm-node">identities</span>
+  <span class="dm-sep"></span>
+  <span class="dm-node">loops · asks · audit_log</span><span class="dm-edge">refs [m42] →</span><span class="dm-node">messages</span>
+  <span class="dm-sep"></span>
+  <span class="dm-node">trace_runs</span><span class="dm-edge">id →</span><span class="dm-node">trace_spans</span>
+</div>
+
+{% for g in groups %}
+<section class="section data-group">
+  <h2 class="section-title">{{ g.group }}</h2>
+  <div class="data-cards">
+    {% for t in g.tables %}
+    <a class="card data-card" href="/data/{{ t.name }}">
+      <div class="data-card-head"><code>{{ t.name }}</code><span class="count">{{ '{:,}'.format(t.count) }} rows</span></div>
+      <p class="small">{{ t.what }}</p>
+      <p class="muted small">Written in: {{ t.written }}</p>
+      <p class="cols">{{ t.columns | join(' · ') }}</p>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+<p class="muted small">Not shown: the keyword index's internal tables (<code>messages_fts_*</code>, <code>messages_vocab</code>), which SQLite maintains for search. Tokens and settings live in files next to the database, not in it.</p>
+{% endblock %}
